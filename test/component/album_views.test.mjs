@@ -45,6 +45,17 @@ describe('具体素材文件视图', () => {
     await view.get('textarea').setValue('修改后歌词\n'); await view.get('button').trigger('click');
     const update = view.emitted('update-pending').at(-1)[0]; expect(await update.raw.text()).toBe('修改后歌词\n'); expect(update.raw.size).toBe(new TextEncoder().encode('修改后歌词\n').byteLength); view.unmount();
   });
+  it('flush 暂存未应用文本且不会重复替换', async () => {
+    const raw = new File(['原始歌词\n'], 'song.elrc', { type: 'text/plain' }); const pendingFile = { id: 'p1', raw, path: 'lyrics/song.elrc', role: 'text' };
+    const view = assetMount({ asset: { path: pendingFile.path, role: 'text' }, pendingFile }); await flushPromises();
+    await view.get('textarea').setValue('修改后歌词\n'); expect(view.emitted('buffer')).toHaveLength(1);
+    expect(view.vm.flush()).toBe(true); const update = view.emitted('update-pending').at(-1)[0]; expect(await update.raw.text()).toBe('修改后歌词\n'); expect(view.vm.flush()).toBe(false); expect(view.emitted('update-pending')).toHaveLength(1); view.unmount();
+  });
+  it('只读状态 flush 不会写入', async () => {
+    const raw = new File(['原始歌词\n'], 'song.elrc', { type: 'text/plain' }); const pendingFile = { id: 'p1', raw, path: 'lyrics/song.elrc', role: 'text' };
+    const view = assetMount({ asset: { path: pendingFile.path, role: 'text' }, pendingFile, readOnly: true }); await flushPromises();
+    expect(view.vm.flush()).toBe(false); expect(view.emitted('update-pending')).toBeUndefined(); view.unmount();
+  });
   it('只读图片仍可预览但不能打开编辑', async () => {
     const raw = new File(['image'], 'cover.png', { type: 'image/png' }); const create = URL.createObjectURL; URL.createObjectURL = () => 'blob:image';
     const view = assetMount({ asset: { path: 'cover.png', role: 'cover' }, pendingFile: { id: 'p2', raw, path: 'cover.png', role: 'cover' }, readOnly: true }); await flushPromises();

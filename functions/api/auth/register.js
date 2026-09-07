@@ -6,11 +6,7 @@ import {
 const INVITE_RE = /^[0-9a-f]{16,64}$/;
 const INVITE_ERROR = { not_found: 'invalid invite', used: 'invite already used', expired: 'invite expired' };
 
-// 邀请制注册：角色取邀请码携带的 role，不信任客户端传入的 role 字段。
-//
-// 先原子占用邀请码（DO 内一条条件 UPDATE 完成），再做慢操作（PBKDF2 派生、建号）：
-// 占用和「校验一次性/有效期」在同一次 DO 调用里做完，两个并发请求用同一个码时只有一个能占到，
-// 不会像「先查 used_by 再回写」那样，在查完到写完之间留出被另一个请求也查到「未使用」的窗口。
+// 先原子占用邀请码，避免并发建号重复使用。
 export async function onRequestPost({ request, env }) {
   const body = await request.json().catch(() => ({}));
   const code = typeof body.invite_code === 'string' ? body.invite_code.trim() : '';

@@ -18,6 +18,7 @@
           <label><span class="sr-only">用途</span><select :value="entry.item.role" :aria-label="`用途 ${pathOf(entry.item)}`" :disabled="locked" @change="change(entry, { role: $event.target.value })"><option v-for="role in roles" :key="role.value" :value="role.value">{{ role.label }}</option></select></label>
           <span class="asset-size">{{ formatSize(entry.item.size ?? entry.item.raw?.size) }}</span>
           <span class="asset-status">{{ entry.pending ? '待保存' : '已上传' }}</span>
+          <button v-if="textFile(entry.item)" type="button" :disabled="locked || textBusy || (!entry.pending && !loadAsset)" :aria-label="`编辑文本 ${pathOf(entry.item)}`" @click="editText(entry)">编辑文本 {{ pathOf(entry.item) }}</button>
           <button v-if="imageFile(entry.item)" type="button" :disabled="locked || imageBusy || (!entry.pending && !loadAsset)" :aria-label="`编辑图片 ${pathOf(entry.item)}`" @click="editImage(entry)">旋转 / 马赛克</button>
           <button type="button" :disabled="locked" :aria-label="`移除 ${pathOf(entry.item)}`" @click="remove(entry)">移除</button>
         </div>
@@ -30,21 +31,25 @@
       </li>
     </ul>
     <ImageEditDialog v-if="imageEdit" :file="imageEdit.file" :theme="theme" @close="imageEdit = null" @save="applyImage" />
+    <section v-if="textEdit" class="asset-text-dialog" role="dialog" aria-modal="true" :aria-label="`编辑文本 ${pathOf(textEdit.entry.item)}`"><header><strong>编辑文本 {{ pathOf(textEdit.entry.item) }}</strong><button type="button" @click="closeText">关闭</button></header><MonacoLrcEditor :model-value="textEdit.text" :language="textLanguage(textEdit.entry.item)" :theme="theme" aria-label="素材文本编辑器" @update:model-value="textEdit.text = $event" /><footer><button type="button" @click="closeText">取消</button><button type="button" @click="applyText">应用文本修改</button></footer></section>
   </section>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue';
 import ImageEditDialog from './ImageEditDialog.vue';
+import MonacoLrcEditor from './MonacoLrcEditor.vue';
 const props = defineProps({ assets: { type: Array, default: () => [] }, pendingFiles: { type: Array, default: () => [] }, tracks: { type: Array, default: () => [] }, uploading: Boolean, progress: String, readOnly: Boolean, theme: String, loadAsset: Function });
 const emit = defineEmits(['import', 'update', 'update-pending', 'replace']);
-const filesInput=ref(null);const folderInput=ref(null);const cameraInput=ref(null);const dragOver=ref(false);const imageBusy=ref(false);const imageEdit=ref(null);const error=ref('');
+const filesInput=ref(null);const folderInput=ref(null);const cameraInput=ref(null);const dragOver=ref(false);const imageBusy=ref(false);const imageEdit=ref(null);const textEdit=ref(null);const textBusy=ref(false);const error=ref('');let textRequest=0;
 const locked=computed(()=>props.readOnly||props.uploading);
 const roles=[{value:'song',label:'原曲'},{value:'photo',label:'歌词本图片'},{value:'text',label:'歌词文本'},{value:'staff',label:'制作信息'},{value:'cover',label:'封面'},{value:'etc',label:'其他'}];
 const entries=computed(()=>[...props.assets.map(item=>({item,key:`saved-${item.n}`,pending:false})),...props.pendingFiles.map(item=>({item,key:`pending-${item.id}`,pending:true}))]);
 const linkTargets=computed(()=>props.tracks.length?props.tracks:entries.value.filter(entry=>entry.item.role==='song').map((entry,index)=>({order:index+1,title:pathOf(entry.item)})));
 const pathOf=item=>item.path||item.name||item.raw?.name||'';
 const imageFile=item=>/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(pathOf(item));
+const textFile=item=>/\.(e?lrc|txt|md|json)$/i.test(pathOf(item));
+const textLanguage=item=>/\.json$/i.test(pathOf(item))?'json':/\.md$/i.test(pathOf(item))?'markdown':'lrc';
 const formatSize=value=>{const size=Number(value)||0;return size>=1024*1024?`${(size/1024/1024).toFixed(1)} MB`:`${Math.ceil(size/1024)} KB`;};
 function change(entry, patch) { if(locked.value)return; const list=entry.pending?props.pendingFiles:props.assets; emit(entry.pending?'update-pending':'update',list.map(item=>item===entry.item?{...item,...patch}:item)); }
 function rename(entry,value) { error.value=''; const name=value.trim().replaceAll('\\','/'); if(!name||name.startsWith('/')||name.split('/').some(part=>!part||part==='.'||part==='..')||/[\u0000-\u001f\u007f]/.test(name)){error.value='文件名必须是专辑内有效的相对路径';return;}if(entries.value.some(other=>other.key!==entry.key&&pathOf(other.item).toLowerCase()===name.toLowerCase())){error.value='已有同名素材';return;} change(entry,entry.pending?{name,path:name}:{path:name}); }
@@ -62,6 +67,9 @@ async function dropFiles(event) {
 }
 async function editImage(entry) { imageBusy.value=true;error.value='';try{const file=entry.item.raw||await props.loadAsset(entry.item);if(!file)throw new Error('图片不可用');imageEdit.value={entry,file};}catch(e){error.value=e.message;}finally{imageBusy.value=false;} }
 function applyImage(file) { const {entry}=imageEdit.value;const name=pathOf(entry.item).replace(/[^/]+$/,file.name);if(entry.pending)change(entry,{raw:file,name,path:name,size:file.size});else emit('replace',{asset:entry.item,file,path:name});imageEdit.value=null; }
+async function editText(entry) { const version=++textRequest;textBusy.value=true;error.value='';try{const file=entry.item.raw||await props.loadAsset(entry.item);if(!file)throw new Error('文本不可用');const text=await file.text();if(version===textRequest)textEdit.value={entry,file,text};}catch(e){if(version===textRequest)error.value=`加载文本失败：${e.message}`;}finally{if(version===textRequest)textBusy.value=false;} }
+function closeText(){textRequest+=1;textEdit.value=null;}
+function applyText(){const current=textEdit.value;if(!current)return;const path=pathOf(current.entry.item);const file=new File([current.text],path.split('/').pop(),{type:current.file.type||'text/plain'});if(current.entry.pending)change(current.entry,{raw:file,name:path,path,size:file.size});else emit('replace',{asset:current.entry.item,file,path});closeText();}
 </script>
 
 <style scoped>
@@ -71,4 +79,5 @@ function applyImage(file) { const {entry}=imageEdit.value;const name=pathOf(entr
 button,input,select { font:inherit; color:inherit; border:1px solid var(--border-color,#d0d7de); border-radius:4px; background:var(--bg-color,#fff); padding:.4rem .5rem; min-width:0; }button { cursor:pointer;font-size:.8rem; }button:disabled { opacity:.5;cursor:default; }
 .asset-list { padding:0;margin:0;list-style:none; }.asset-item { border-bottom:1px solid var(--border-color,#d0d7de); padding:.8rem 0; font-size:.82rem; }.asset-path { flex:1;min-width:160px; }.asset-path input { width:100%;box-sizing:border-box; }.asset-icon { font-size:1.25rem;opacity:.65; }
 .asset-size,.asset-status,.asset-empty { opacity:.65; }.asset-links { display:flex;gap:.6rem;flex-wrap:wrap;border:0;padding:.5rem 0 0 1.8rem;min-width:0; }.asset-links legend { float:left;margin-right:.65rem;padding-top:.6rem;opacity:.6; }.asset-links label { display:flex;align-items:center;gap:.2rem; }.asset-links input { accent-color:var(--theme-color,#3a7afe); }.shared { color:var(--theme-color,#3a7afe); }.sr-only { position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%); }[role='alert'] { color:#d73a49; }
+.asset-text-dialog{position:fixed;z-index:1200;inset:5vh 5vw;background:var(--bg-color,#fff);color:inherit;border:1px solid var(--border-color,#d0d7de);border-radius:8px;padding:1rem;display:grid;gap:.8rem}.asset-text-dialog header,.asset-text-dialog footer{display:flex;align-items:center;gap:.6rem}.asset-text-dialog header strong{flex:1;overflow-wrap:anywhere}.asset-text-dialog footer{justify-content:flex-end}
 </style>

@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { reactive } from 'vue';
 import AlbumMetaView from '../../docs/.vuepress/components/AlbumMetaView.vue';
 import AlbumAssetsView from '../../docs/.vuepress/components/AlbumAssetsView.vue';
+import WorkspaceAssetView from '../../docs/.vuepress/components/WorkspaceAssetView.vue';
 import { toEdit, toDraft } from '../../docs/.vuepress/components/workspaceDocument.js';
 
 describe('专辑视图', () => {
@@ -27,5 +28,40 @@ describe('专辑视图', () => {
     await view.get('[aria-label="移除 page.jpg"]').trigger('click');
     expect(view.emitted('update').at(-1)[0]).toEqual([]);
     view.unmount();
+  });
+  it('素材总览提供文本编辑入口', () => {
+    const view = mount(AlbumAssetsView, { props: { pendingFiles: [{ id: 'text', raw: new File(['原文'], 'notes.txt'), path: 'notes.txt', role: 'text' }] } });
+    expect(view.get('[aria-label="编辑文本 notes.txt"]').exists()).toBe(true); view.unmount();
+  });
+});
+
+const MonacoStub = { name: 'MonacoLrcEditor', props: ['modelValue'], emits: ['update:modelValue'], template: '<textarea :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />' };
+const assetMount = (props) => mount(WorkspaceAssetView, { props, global: { stubs: { MonacoLrcEditor: MonacoStub, ImageEditDialog: true } } });
+
+describe('具体素材文件视图', () => {
+  it('编辑 pending 文本后以原始文字内容更新待上传文件', async () => {
+    const raw = new File(['原始歌词\n'], 'song.elrc', { type: 'text/plain' }); const pendingFile = { id: 'p1', raw, path: 'lyrics/song.elrc', role: 'text' };
+    const view = assetMount({ asset: { path: pendingFile.path, role: 'text' }, pendingFile }); await flushPromises();
+    await view.get('textarea').setValue('修改后歌词\n'); await view.get('button').trigger('click');
+    const update = view.emitted('update-pending').at(-1)[0]; expect(await update.raw.text()).toBe('修改后歌词\n'); expect(update.raw.size).toBe(new TextEncoder().encode('修改后歌词\n').byteLength); view.unmount();
+  });
+  it('只读图片仍可预览但不能打开编辑', async () => {
+    const raw = new File(['image'], 'cover.png', { type: 'image/png' }); const create = URL.createObjectURL; URL.createObjectURL = () => 'blob:image';
+    const view = assetMount({ asset: { path: 'cover.png', role: 'cover' }, pendingFile: { id: 'p2', raw, path: 'cover.png', role: 'cover' }, readOnly: true }); await flushPromises();
+    expect(view.get('img').attributes('src')).toBe('blob:image'); expect(view.text()).not.toContain('旋转 / 马赛克'); view.unmount(); URL.createObjectURL = create;
+  });
+  it('切换素材时不会显示过期异步加载结果', async () => {
+    let first; let second; const loadAsset = (asset) => new Promise((resolve) => { if (asset.n === 1) first = resolve; else second = resolve; });
+    const view = assetMount({ asset: { n: 1, path: 'first.txt', role: 'text' }, loadAsset }); await view.setProps({ asset: { n: 2, path: 'second.txt', role: 'text' } });
+    first(new File(['旧内容'], 'first.txt')); await flushPromises(); expect(view.text()).toContain('正在加载文件'); second(new File(['新内容'], 'second.txt')); await flushPromises(); expect(view.get('textarea').element.value).toBe('新内容'); view.unmount();
+  });
+  it('素材切换后不会写入已开始读取的旧文本', async () => {
+    let firstText; let secondText; let calls = 0;
+    const loadAsset = () => ++calls === 1
+      ? { name: 'first.txt', type: 'text/plain', text: () => new Promise(resolve => { firstText = resolve; }) }
+      : { name: 'second.txt', type: 'text/plain', text: () => new Promise(resolve => { secondText = resolve; }) };
+    const view = assetMount({ asset: { n: 1, path: 'first.txt', role: 'text' }, loadAsset }); await flushPromises();
+    await view.setProps({ asset: { n: 2, path: 'second.txt', role: 'text' } }); firstText('旧内容'); await flushPromises();
+    secondText('新内容'); await flushPromises(); expect(view.get('textarea').element.value).toBe('新内容'); view.unmount();
   });
 });

@@ -161,6 +161,10 @@ export function viewsFor(resource) {
   return resource.kind === 'track' ? ['timing', 'text:lrc', 'text:elrc'] : resource.kind === 'document' ? ['text:document'] : ['meta', 'text:json', 'assets'];
 }
 
+export function documentLanguage(path) {
+  return /\.json$/i.test(String(path || '')) ? 'json' : /\.md$/i.test(String(path || '')) ? 'markdown' : 'plaintext';
+}
+
 const AUDIO_RE = /\.(mp3|flac|wav|m4a|aac|ogg|opus|wma|aiff?)$/i;
 const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i;
 const TEXT_RE = /\.(e?lrc|txt|md)$/i;
@@ -179,7 +183,9 @@ export function explorerTree(draft, origin) {
   const albumLabel = draft.album || origin.storageAlbum;
   const trackNodes = (draft.tracks || []).map((track, index) => {
     const trackResource = { ...base, kind: 'track', index };
-    const label = `${String(track.order).padStart(2, '0')} ${track.title || ''}`.trim();
+    const conventionalLabel = `${String(track.order).padStart(2, '0')} ${track.title || ''}`.trim();
+    const label = track.lyric_stem || conventionalLabel;
+    const filename = String(label).split('/').at(-1);
     return {
       id: documentId(trackResource, 'timing'),
       type: 'virtual',
@@ -187,14 +193,14 @@ export function explorerTree(draft, origin) {
       resource: trackResource,
       view: 'timing',
       children: [
-        { id: documentId(trackResource, 'text:lrc'), type: 'file', label: `${label}.lrc`, resource: trackResource, view: 'text:lrc' },
-        { id: documentId(trackResource, 'text:elrc'), type: 'file', label: `${label}.elrc`, resource: trackResource, view: 'text:elrc' },
+        { id: documentId(trackResource, 'text:lrc'), type: 'file', label: `${filename}.lrc`, resource: trackResource, view: 'text:lrc' },
+        { id: documentId(trackResource, 'text:elrc'), type: 'file', label: `${filename}.elrc`, resource: trackResource, view: 'text:elrc' },
       ],
     };
   });
   const documentNodes = (draft.documents || []).map((item, index) => {
     const resource = { ...base, kind: 'document', index };
-    return { id: documentId(resource, 'text:document'), type: item.kind === 'folder' ? 'folder' : 'file', label: item.path, resource, view: 'text:document' };
+    return { id: documentId(resource, 'text:document'), type: item.kind === 'folder' ? 'folder' : 'file', label: item.path, path: item.path, resource, view: 'text:document' };
   });
   const flat = [...documentNodes, ...trackNodes];
   for (const asset of draft.assets || []) flat.push({ id: documentId({ ...base, kind: 'asset', index: asset.n }, 'asset'), type: 'file', label: asset.path, resource: { ...base, kind: 'asset', index: asset.n }, view: 'assets' });
@@ -202,7 +208,7 @@ export function explorerTree(draft, origin) {
   const add = (nodes, node) => {
     const parts = String(node.label).split('/').filter(Boolean); if (parts.length < 2) return nodes.push(node);
     let level = nodes; let path = '';
-    for (const part of parts.slice(0, -1)) { path += `${part}/`; let folder = level.find(item => item.type === 'folder' && item.label === part); if (!folder) { folder = { id: `folder:${path}`, type: 'folder', label: part, children: [] }; level.push(folder); } level = folder.children; }
+    for (const part of parts.slice(0, -1)) { path += `${part}/`; let folder = level.find(item => item.type === 'folder' && item.label === part); if (!folder) { folder = { id: `folder:${path}`, type: 'folder', label: part, path: path.slice(0, -1), children: [] }; level.push(folder); } folder.children ||= []; level = folder.children; }
     level.push({ ...node, label: parts.at(-1) });
   };
   for (const node of flat) add(roots, node);

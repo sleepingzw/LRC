@@ -8,7 +8,7 @@
       <button v-if="user" type="button" @click="$emit('account')">{{ user.display_name || user.name || '账户设置' }}</button><button v-if="user?.role === 'admin'" type="button" @click="$emit('users')">用户管理</button>
     </header>
     <div class="workspace-shell">
-      <WorkspaceExplorer :drafts="draftEntries" :pending="visiblePending" :catalog="catalogEntries" :expanded="expanded" :selected-id="activeId" :busy="busy" @refresh="refresh" @create-album="requestAlbum" @create-track="requestTrack" @create-document="requestDocument" @upload="openUpload" @toggle="toggle" @open="openNode" @open-pending="openPending" @open-catalog="openCatalog" @retry="retryPending" @discard="discardPending" @discard-draft="discardDraft" />
+      <WorkspaceExplorer :drafts="draftEntries" :pending="visiblePending" :catalog="catalogEntries" :expanded="expanded" :selected-id="activeId" :busy="busy" :creation-feedback="creationFeedback" @refresh="refresh" @create-album="requestAlbum" @create-document="requestDocument" @upload="openUpload" @toggle="toggle" @open="openNode" @open-pending="openPending" @open-catalog="openCatalog" @retry="retryPending" @discard="discardPending" @discard-draft="discardDraft" />
       <main class="workspace-main">
         <WorkspaceTabs :documents="documents" :active-id="activeId" @activate="activate" @close="closeDocument" />
         <section v-if="activeDocument" class="workspace-editor">
@@ -18,7 +18,7 @@
           <div v-if="activeDocument.view !== 'new-album'" class="workspace-content" :class="{ 'source-content': activeDocument.view.startsWith('text:') }" :inert="busy || undefined">
             <slot v-if="activeDocument.view === 'account'" name="account" /><slot v-else-if="activeDocument.view === 'users'" name="users" />
             <TrackTextView v-else-if="selectedTrack && ['text:lrc', 'text:elrc'].includes(activeDocument.view)" :key="`${selectedTrack._id}:${activeDocument.view}`" :track="selectedTrack" :format="activeDocument.view === 'text:elrc' ? 'elrc' : 'lrc'" :theme="theme" :read-only="activeEntry.readOnly" @buffer="bufferTrack" @update="updateTrack" />
-            <MonacoLrcEditor v-else-if="selectedDocument && selectedDocument.kind === 'file'" :model-value="selectedDocument.text" language="plaintext" :theme="theme" :read-only="activeEntry.readOnly" :aria-label="`编辑 ${selectedDocument.path}`" @update:model-value="updateDocument($event)" />
+            <MonacoLrcEditor v-else-if="selectedDocument && selectedDocument.kind === 'file'" :model-value="selectedDocument.text" :language="documentLanguage(selectedDocument.path)" :theme="theme" :read-only="activeEntry.readOnly" :aria-label="`编辑 ${selectedDocument.path}`" @update:model-value="updateDocument($event)" />
             <TrackTimingView v-else-if="selectedTrack && activeDocument.view === 'timing'" :key="selectedTrack._id" :track="selectedTrack" :audio-url="audioUrl" :theme="theme" :read-only="activeEntry.readOnly" @update="updateTrack" />
             <AlbumMetaView v-else-if="activeEntry && activeDocument.view === 'meta'" :editor="activeEntry.edit" :theme="theme" :read-only="activeEntry.readOnly" :cover-url="coverUrl" :page-url="pageUrl" @update="updateAlbum" @cover="updateCover" />
             <AlbumAssetsView v-else-if="activeEntry && activeDocument.view === 'assets'" :assets="activeEntry.edit.assets" :pending-files="activeEntry.pendingFiles" :tracks="activeEntry.edit.tracks" :uploading="uploading" :progress="uploadProgress" :read-only="activeEntry.readOnly" :theme="theme" :load-asset="loadAsset" @import="queueAssets" @update="updateAssets" @update-pending="updatePendingFiles" @replace="replaceAsset" />
@@ -29,7 +29,6 @@
       </main>
     </div>
     <footer class="workspace-statusbar"><span :class="{ error: statusError }" role="status">{{ status || '就绪' }}</span><span class="workspace-spacer" /><span v-if="dirtyEntries.length">{{ dirtyEntries.length }} 个专辑未保存</span><span>{{ activeDocument ? viewLabel(activeDocument.view) : '歌词工作区' }}</span></footer>
-    <div v-if="createDialog" class="workspace-overlay" @keydown.esc="createDialog = null"><form class="workspace-dialog create-dialog" role="dialog" aria-modal="true" :aria-label="createDialog.kind === 'track' ? '新建曲目' : '新建文件'" @submit.prevent="confirmCreate"><header><strong>{{ createDialog.kind === 'track' ? '新建曲目' : createDialog.kind === 'folder' ? '新建文件夹' : '新建文件' }}</strong><button type="button" aria-label="关闭新建窗口" @click="createDialog = null">×</button></header><label>名称<input v-model="createDialog.name" autofocus required :disabled="busy" aria-label="名称"></label><footer><button type="button" :disabled="busy" @click="createDialog = null">取消</button><button class="primary" :disabled="busy || !createDialog.name.trim()">创建</button></footer></form></div>
   </section>
 </template>
 
@@ -48,12 +47,12 @@ import * as documentModel from './workspaceDocument.js';
 import { applySourceBuffer, nextAssetNumber } from './workspaceEditState.js';
 import { uploadFile } from './uploadTransport.js';
 import { stripFlacPictureBlocks } from '../lib/flac.js';
-const { assetRole, documentId, explorerTree, toDraft, toEdit, viewsFor } = documentModel;
+const { assetRole, documentId, documentLanguage, explorerTree, toDraft, toEdit, viewsFor } = documentModel;
 const props = defineProps({ theme: { type: String, default: 'light' }, user: { type: Object, default: null } });
 const emit = defineEmits(['unauthorized', 'account', 'users']);
 const entries = ref([]); const catalog = ref([]); const pending = ref([]); const documents = ref([]); const activeId = ref(''); const expanded = ref([]);
 const busy = ref(false); const uploading = ref(false); const uploadProgress = ref(''); const status = ref(''); const statusError = ref(false); const audioUrl = ref(''); const coverUrl = ref(''); const pageUrls = ref({});
-const jsonMessage = ref(''); const jsonError = ref(false); const uploadKey = ref(''); const createDialog = ref(null); const albumCreation = ref({ album: '', submissionType: 'album', pendingFiles: [] });
+const jsonMessage = ref(''); const jsonError = ref(false); const creationFeedback = ref({ sequence: 0 }); const albumCreation = ref({ album: '', submissionType: 'album', pendingFiles: [], createdEntryKey: '' });
 let id = 0; let pollTimer; let refreshing = false; let disposed = false; let mediaAbort; let mediaVersion = 0; const transferAbort = new AbortController();
 const newId = () => `workspace-${++id}`;
 const api = new Proxy(createWorkspaceAdapter(), { get(target, key) { const value = target[key]; return typeof value !== 'function' ? value : async (...args) => { try { return await value(...args); } catch (error) { if (error?.status === 401) emit('unauthorized'); throw error; } }; } });
@@ -76,7 +75,7 @@ function replaceEntry(next) {
   const current = entries.value.find(item => item.key === next.key);
   if (!current) { entries.value.unshift(next); return entries.value[0]; }
   current.readOnly = next.readOnly; current.state = next.state; current.owner = next.owner || current.owner;
-  const opened = documents.value.some(doc => doc.entryKey === current.key) || uploadKey.value === current.key;
+  const opened = documents.value.some(doc => doc.entryKey === current.key);
   if (current.revision === current.savedRevision && !busy.value && !opened && !current.pendingFiles.length) current.edit = next.edit;
   return current;
 }
@@ -90,9 +89,9 @@ function refreshDocumentTitles(entry) {
 function markDirty(entry = activeEntry.value, resource = activeDocument.value?.resource) {
   if (!entry || entry.readOnly) return;
   entry.revision += 1;
-  const key = resource?.kind === 'track' ? `track:${resource.index}` : 'album';
+  const key = resource?.kind === 'track' ? `track:${resource.index}` : resource?.kind === 'document' ? `document:${resource.index}` : 'album';
   if (!entry.dirtyResources.includes(key)) entry.dirtyResources.push(key);
-  for (const doc of documents.value.filter(item => item.entryKey === entry.key)) doc.dirty = doc.resource.kind === 'album' || entry.dirtyResources.includes(`track:${doc.resource.index}`);
+  for (const doc of documents.value.filter(item => item.entryKey === entry.key)) doc.dirty = doc.resource.kind === 'album' || entry.dirtyResources.includes(`track:${doc.resource.index}`) || entry.dirtyResources.includes(`document:${doc.resource.index}`);
 }
 function applyTrackBuffers(entry, track) {
   for (const format of Object.keys(track._sourceBuffers || {})) if (applySourceBuffer(track, format, newId, text => window.confirm(text))) updateTrack(track, entry);
@@ -114,7 +113,7 @@ function openNode(node, entryKey) {
   const targetId = documentId(node.resource, node.view);
   let doc = documents.value.find(item => item.id === targetId);
   if (!doc) {
-    doc = { id: targetId, resource: node.resource, fileView: node.view, view: initialView, title: node.label, entryKey: entry.key, dirty: entry.revision !== entry.savedRevision && (node.resource.kind === 'album' || entry.dirtyResources.includes(`track:${node.resource.index}`)) };
+    doc = { id: targetId, resource: node.resource, fileView: node.view, view: initialView, title: node.label, entryKey: entry.key, dirty: entry.revision !== entry.savedRevision && (node.resource.kind === 'album' || entry.dirtyResources.includes(`track:${node.resource.index}`) || entry.dirtyResources.includes(`document:${node.resource.index}`)) };
     documents.value.push(doc);
   }
   activeId.value = doc.id;
@@ -140,7 +139,7 @@ function updateTrack(track, entry = activeEntry.value) {
   }
 }
 function updateAlbum() { markDirty(); refreshDocumentTitles(activeEntry.value); }
-function updateDocument(text) { if (!selectedDocument.value || activeEntry.value.readOnly) return; selectedDocument.value.text = text; markDirty(activeEntry.value, { kind: 'album' }); }
+function updateDocument(text) { if (!selectedDocument.value || activeEntry.value.readOnly) return; selectedDocument.value.text = text; markDirty(activeEntry.value, activeDocument.value.resource); }
 function updateAssets(assets, entry = activeEntry.value) { if (!entry || entry.readOnly) return; entry.edit.assets = assets; markDirty(entry, { kind: 'album' }); }
 function updatePendingFiles(files, entry = activeEntry.value) { if (!entry || entry.readOnly) return; entry.pendingFiles = files.map(item => { const old = entry.pendingFiles.find(value => value.id === item.id); return old && old.raw !== item.raw ? { ...item, transfer: undefined, uploaded: false } : item; }); markDirty(entry, { kind: 'album' }); }
 function replaceAsset(payload, entry = activeEntry.value) {
@@ -183,53 +182,50 @@ async function refresh() {
     }
   } catch (error) { if (!disposed) setStatus(`读取失败：${error.message || '网络错误'}`, true); } finally { refreshing = false; }
 }
-function requestAlbum() { if (busy.value) return; const existing = documents.value.find(doc => doc.id === 'virtual:new-album'); if (existing) return activeId.value = existing.id; albumCreation.value = { album: '', submissionType: 'album', pendingFiles: [] }; documents.value.push({ id: 'virtual:new-album', resource: { kind: 'virtual' }, view: 'new-album', title: '新建专辑', entryKey: '', dirty: false }); activeId.value = 'virtual:new-album'; }
-function requestTrack(key) { const entry = entries.value.find(item => item.key === key) || activeEntry.value; if (!entry) return requestAlbum(); if (!busy.value && flushCurrent()) createDialog.value = { kind: 'track', name: '', entryKey: entry.key }; }
-async function requestDocument({ key, kind, name }) {
+function requestAlbum() { if (busy.value) return; const existing = documents.value.find(doc => doc.id === 'virtual:new-album'); if (existing) return activeId.value = existing.id; albumCreation.value = { album: '', submissionType: 'album', pendingFiles: [], createdEntryKey: '' }; documents.value.push({ id: 'virtual:new-album', resource: { kind: 'virtual' }, view: 'new-album', title: '新建专辑', entryKey: '', dirty: false }); activeId.value = 'virtual:new-album'; }
+function findNode(nodes, id) { for (const node of nodes || []) { if (node.id === id) return node; const nested = findNode(node.children, id); if (nested) return nested; } return null; }
+function documentPath(parentPath, name) { return [String(parentPath || '').replace(/^\/+|\/+$/g, ''), String(name || '').replace(/^\/+/, '')].filter(Boolean).join('/'); }
+async function requestDocument({ key, kind, name, parentPath = '' }) {
   if (busy.value || !name?.trim()) return;
   const entry = entries.value.find(item => item.key === key);
   if (!entry || entry.origin !== 'workspace' || entry.readOnly) return;
+  const path = documentPath(parentPath, name.trim());
   busy.value = true;
-  try { const result = await api.document(entry.ref, kind, name.trim()); entry.edit.documents ||= []; entry.edit.documents.push(result.document); markDirty(entry, { kind: 'album' }); setStatus('已创建'); }
-  catch (error) { setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
+  try {
+    const result = await api.document(entry.ref, kind, path);
+    let node;
+    if (result.track) {
+      const track = toEdit(entry.storageAlbum, { tracks: [result.track] }, newId).tracks[0];
+      entry.edit.tracks.push(track); markDirty(entry, { kind: 'track', index: entry.edit.tracks.length - 1 });
+      node = findNode(explorerTree(toDraft(entry.edit), entry), documentId({ origin: entry.origin, ref: entry.ref, storageAlbum: entry.storageAlbum, kind: 'track', index: entry.edit.tracks.length - 1 }, 'timing'));
+    } else {
+      entry.edit.documents ||= []; entry.edit.documents.push(result.document); markDirty(entry, { kind: 'document', index: entry.edit.documents.length - 1 });
+      node = findNode(explorerTree(toDraft(entry.edit), entry), documentId({ origin: entry.origin, ref: entry.ref, storageAlbum: entry.storageAlbum, kind: 'document', index: entry.edit.documents.length - 1 }, 'text:document'));
+    }
+    if (!expanded.value.includes(entry.key)) expanded.value.push(entry.key);
+    creationFeedback.value = { sequence: creationFeedback.value.sequence + 1, key, ok: true };
+    busy.value = false;
+    if (node) openNode(node, entry.key);
+    setStatus('已创建');
+  } catch (error) { creationFeedback.value = { sequence: creationFeedback.value.sequence + 1, key, ok: false, error: `创建失败：${error.message}` }; setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
 }
 function queueCreation(files) { const known = new Set(albumCreation.value.pendingFiles.map(item => item.path.toLowerCase())); for (const raw of Array.from(files || [])) { const path = raw.webkitRelativePath || raw.name; if (!known.has(path.toLowerCase())) { known.add(path.toLowerCase()); albumCreation.value.pendingFiles.push({ id: newId(), raw, name: path, path, role: assetRole(path), linkTo: [] }); } } }
 async function createAlbumFromCard() {
   if (busy.value) return; busy.value = true;
   try {
     const { album, submissionType, pendingFiles } = albumCreation.value;
-    const result = await api.create(album, submissionType);
-    const entry = replaceEntry(entryFrom('workspace', result.ref, result.draft.album || album, result.draft));
+    let entry = entries.value.find(item => item.key === albumCreation.value.createdEntryKey);
+    if (!entry) {
+      const result = await api.create(album, submissionType);
+      entry = replaceEntry(entryFrom('workspace', result.ref, result.draft.album || album, result.draft));
+      entry.pendingFiles = pendingFiles;
+      albumCreation.value = { ...albumCreation.value, createdEntryKey: entry.key };
+    }
     busy.value = false;
-    entry.pendingFiles = pendingFiles;
     if (pendingFiles.length && !(await saveActive(entry))) return;
     if (!expanded.value.includes(entry.key)) expanded.value.push(entry.key);
     documents.value = documents.value.filter(doc => doc.id !== 'virtual:new-album');
     const node = explorerTree(toDraft(entry.edit), entry)[0]; openNode(node, entry.key);
-  } catch (error) { setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
-}
-async function confirmCreate() {
-  const dialog = createDialog.value; if (!dialog || busy.value || !dialog.name.trim()) return;
-  busy.value = true;
-  try {
-    let entry; let node;
-    if (dialog.kind === 'track') {
-      entry = entries.value.find(item => item.key === dialog.entryKey);
-      if (entry.origin !== 'workspace') throw new Error('审核任务不能添加新曲目');
-      const result = await api.lrc(entry.ref, dialog.name.trim());
-      const track = toEdit(entry.storageAlbum, { tracks: [result.track] }, newId).tracks[0];
-      track.order = Math.max(0, ...entry.edit.tracks.map(item => Number(item.order) || 0)) + 1;
-      entry.edit.tracks.push(track); markDirty(entry, { kind: 'track', index: entry.edit.tracks.length - 1 });
-      node = explorerTree(toDraft(entry.edit), entry)[0].children.at(-1);
-    } else {
-      entry = entries.value.find(item => item.key === dialog.entryKey);
-      if (!entry || entry.origin !== 'workspace') throw new Error('当前专辑不可新建文件');
-      const result = await api.document(entry.ref, dialog.kind, dialog.name.trim());
-      entry.edit.documents ||= []; entry.edit.documents.push(result.document); markDirty(entry, { kind: 'album' });
-      node = explorerTree(toDraft(entry.edit), entry)[0];
-    }
-    if (!expanded.value.includes(entry.key)) expanded.value.push(entry.key);
-    createDialog.value = null; busy.value = false; openNode(node, entry.key); if (dialog.afterUpload) uploadKey.value = entry.key;
   } catch (error) { setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
 }
 async function openCatalog(item) {
@@ -244,7 +240,7 @@ async function retryPending(item) { try { await api.retry(item.ref); await refre
 function removeEntry(entry) { entries.value = entries.value.filter(item => item.key !== entry.key); documents.value = documents.value.filter(doc => doc.entryKey !== entry.key); if (!activeDocument.value) activeId.value = documents.value.at(-1)?.id || ''; }
 async function discardPending(item) { if (!window.confirm(`丢弃「${item.album}」的审核草稿及未保存修改？`)) return; try { await api.discard(item.ref, item.storage_album); for (const entry of entries.value.filter(entry => entry.origin === 'ingest' && entry.ref === item.ref && entry.storageAlbum === item.storage_album)) removeEntry(entry); await refresh(); } catch (error) { setStatus(`丢弃失败：${error.message}`, true); } }
 async function discardDraft(key) { const entry = entries.value.find(item => item.key === key); if (!entry || busy.value || !window.confirm(`丢弃「${entry.edit.album}」的草稿及未保存修改？`)) return; try { if (entry.origin === 'ingest') await api.discard(entry.ref, entry.storageAlbum); else await api.workspaceDiscard(entry.ref); removeEntry(entry); await refresh(); } catch (error) { setStatus(`丢弃失败：${error.message}`, true); } }
-async function openUpload(key) { const entry = entries.value.find(item => item.key === key) || activeEntry.value; if (entry && !entry.readOnly) await saveActive(entry); }
+async function openUpload({ key, files }) { const entry = entries.value.find(item => item.key === key) || activeEntry.value; if (!entry || entry.readOnly || busy.value) return; queueAssets(files, entry); if (entry.pendingFiles.length) await saveActive(entry); }
 function queueAssets(files, entry = activeEntry.value) {
   if (!entry || entry.readOnly || uploading.value) return;
   const known = new Set([...entry.edit.assets.map(item => item.path), ...entry.pendingFiles.map(item => item.path || item.name)].map(name => String(name).toLowerCase()));

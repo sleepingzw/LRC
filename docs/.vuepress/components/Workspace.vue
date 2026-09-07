@@ -3,21 +3,22 @@
     <header class="workspace-bar">
       <strong>歌词工作站</strong><span class="workspace-spacer" />
       <button type="button" :disabled="busy" @click="requestAlbum">新建专辑</button>
-      <button type="button" :disabled="busy" @click="openUpload">上传素材<span v-if="activeEntry?.pendingFiles.length"> · {{ activeEntry.pendingFiles.length }}</span></button>
       <button type="button" :disabled="busy || !activeEntry || activeEntry.readOnly" @click="saveActive">{{ busy ? '处理中…' : '保存' }}</button>
       <button type="button" class="primary" :disabled="busy || !activeEntry || activeEntry.readOnly" @click="extractOrContinue">{{ activeEntry?.origin === 'ingest' ? '保存并继续入库' : '提取生成' }}</button>
       <button v-if="user" type="button" @click="$emit('account')">{{ user.display_name || user.name || '账户设置' }}</button><button v-if="user?.role === 'admin'" type="button" @click="$emit('users')">用户管理</button>
     </header>
     <div class="workspace-shell">
-      <WorkspaceExplorer :drafts="draftEntries" :pending="visiblePending" :catalog="catalogEntries" :expanded="expanded" :selected-id="activeId" :busy="busy" @refresh="refresh" @create-album="requestAlbum" @create-track="requestTrack" @toggle="toggle" @open="openNode" @open-pending="openPending" @open-catalog="openCatalog" @retry="retryPending" @discard="discardPending" @discard-draft="discardDraft" />
+      <WorkspaceExplorer :drafts="draftEntries" :pending="visiblePending" :catalog="catalogEntries" :expanded="expanded" :selected-id="activeId" :busy="busy" @refresh="refresh" @create-album="requestAlbum" @create-track="requestTrack" @create-document="requestDocument" @upload="openUpload" @toggle="toggle" @open="openNode" @open-pending="openPending" @open-catalog="openCatalog" @retry="retryPending" @discard="discardPending" @discard-draft="discardDraft" />
       <main class="workspace-main">
         <WorkspaceTabs :documents="documents" :active-id="activeId" @activate="activate" @close="closeDocument" />
         <section v-if="activeDocument" class="workspace-editor">
           <header class="workspace-editor-head"><span class="workspace-breadcrumb">{{ activeEntry?.edit.album || '工作站' }} / {{ activeDocument.title }}</span><span class="workspace-spacer" /><select v-if="activeEntry" :value="activeDocument.view" aria-label="切换编辑视图" :disabled="busy" @change="switchView($event.target.value)"><option v-for="view in activeViews" :key="view" :value="view">{{ viewLabel(view) }}</option></select></header>
-          <div v-if="selectedTrack && linkedTracks.length" class="workspace-sync"><label><input v-model="selectedTrack._syncInstrumental" type="checkbox" :disabled="busy || activeEntry.readOnly || selectedTrack.authoritativeLrc">同步修改伴奏歌词</label><span>{{ linkedTracks.map(track => track.title).join('、') }}</span></div>
-          <div class="workspace-content" :class="{ 'source-content': activeDocument.view.startsWith('text:') }" :inert="busy || undefined">
+          <AlbumCreationCard v-if="activeDocument.view === 'new-album'" @cancel="closeDocument(activeDocument.id)" @create="createAlbumFromCard" />
+          <div v-else-if="selectedTrack && linkedTracks.length" class="workspace-sync"><label><input v-model="selectedTrack._syncInstrumental" type="checkbox" :disabled="busy || activeEntry.readOnly || selectedTrack.authoritativeLrc">同步修改伴奏歌词</label><span>{{ linkedTracks.map(track => track.title).join('、') }}</span></div>
+          <div v-if="activeDocument.view !== 'new-album'" class="workspace-content" :class="{ 'source-content': activeDocument.view.startsWith('text:') }" :inert="busy || undefined">
             <slot v-if="activeDocument.view === 'account'" name="account" /><slot v-else-if="activeDocument.view === 'users'" name="users" />
             <TrackTextView v-else-if="selectedTrack && ['text:lrc', 'text:elrc'].includes(activeDocument.view)" :key="`${selectedTrack._id}:${activeDocument.view}`" :track="selectedTrack" :format="activeDocument.view === 'text:elrc' ? 'elrc' : 'lrc'" :theme="theme" :read-only="activeEntry.readOnly" @buffer="bufferTrack" @update="updateTrack" />
+            <MonacoLrcEditor v-else-if="selectedDocument && selectedDocument.kind === 'file'" :model-value="selectedDocument.text" language="plaintext" :theme="theme" :read-only="activeEntry.readOnly" :aria-label="`编辑 ${selectedDocument.path}`" @update:model-value="updateDocument($event)" />
             <TrackTimingView v-else-if="selectedTrack && activeDocument.view === 'timing'" :key="selectedTrack._id" :track="selectedTrack" :audio-url="audioUrl" :theme="theme" :read-only="activeEntry.readOnly" @update="updateTrack" />
             <AlbumMetaView v-else-if="activeEntry && activeDocument.view === 'meta'" :editor="activeEntry.edit" :theme="theme" :read-only="activeEntry.readOnly" :cover-url="coverUrl" :page-url="pageUrl" @update="updateAlbum" @cover="updateCover" />
             <AlbumAssetsView v-else-if="activeEntry && activeDocument.view === 'assets'" :assets="activeEntry.edit.assets" :pending-files="activeEntry.pendingFiles" :tracks="activeEntry.edit.tracks" :uploading="uploading" :progress="uploadProgress" :read-only="activeEntry.readOnly" :theme="theme" :load-asset="loadAsset" @import="queueAssets" @update="updateAssets" @update-pending="updatePendingFiles" @replace="replaceAsset" />
@@ -29,7 +30,7 @@
     </div>
     <footer class="workspace-statusbar"><span :class="{ error: statusError }" role="status">{{ status || '就绪' }}</span><span class="workspace-spacer" /><span v-if="dirtyEntries.length">{{ dirtyEntries.length }} 个专辑未保存</span><span>{{ activeDocument ? viewLabel(activeDocument.view) : '歌词工作区' }}</span></footer>
     <WorkspaceUploadDialog v-if="uploadEntry" :entry="uploadEntry" :busy="busy" :uploading="uploading" :progress="uploadProgress" :status="status" :status-error="statusError" :theme="theme" :load-asset="asset => loadAsset(asset, uploadEntry)" @close="uploadKey = ''" @import="files => queueAssets(files, uploadEntry)" @update="assets => updateAssets(assets, uploadEntry)" @update-pending="files => updatePendingFiles(files, uploadEntry)" @replace="payload => replaceAsset(payload, uploadEntry)" @save="saveActive(uploadEntry)" @extract="extractOrContinue(uploadEntry)" />
-    <div v-if="createDialog" class="workspace-overlay" @keydown.esc="createDialog = null"><form class="workspace-dialog create-dialog" role="dialog" aria-modal="true" :aria-label="createDialog.kind === 'track' ? '新建曲目' : '新建专辑'" @submit.prevent="confirmCreate"><header><strong>{{ createDialog.kind === 'track' ? '新建曲目' : '新建专辑' }}</strong><button type="button" aria-label="关闭新建窗口" @click="createDialog = null">×</button></header><label>名称<input v-model="createDialog.name" autofocus required :disabled="busy" aria-label="名称"></label><footer><button type="button" :disabled="busy" @click="createDialog = null">取消</button><button class="primary" :disabled="busy || !createDialog.name.trim()">创建</button></footer></form></div>
+    <div v-if="createDialog" class="workspace-overlay" @keydown.esc="createDialog = null"><form class="workspace-dialog create-dialog" role="dialog" aria-modal="true" :aria-label="createDialog.kind === 'track' ? '新建曲目' : '新建文件'" @submit.prevent="confirmCreate"><header><strong>{{ createDialog.kind === 'track' ? '新建曲目' : createDialog.kind === 'folder' ? '新建文件夹' : '新建文件' }}</strong><button type="button" aria-label="关闭新建窗口" @click="createDialog = null">×</button></header><label>名称<input v-model="createDialog.name" autofocus required :disabled="busy" aria-label="名称"></label><footer><button type="button" :disabled="busy" @click="createDialog = null">取消</button><button class="primary" :disabled="busy || !createDialog.name.trim()">创建</button></footer></form></div>
   </section>
 </template>
 
@@ -38,6 +39,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import WorkspaceExplorer from './WorkspaceExplorer.vue';
 import WorkspaceTabs from './WorkspaceTabs.vue';
 import WorkspaceUploadDialog from './WorkspaceUploadDialog.vue';
+import AlbumCreationCard from './AlbumCreationCard.vue';
 import TrackTextView from './TrackTextView.vue';
 import TrackTimingView from './TrackTimingView.vue';
 import AlbumMetaView from './AlbumMetaView.vue';
@@ -61,6 +63,7 @@ const activeDocument = computed(() => documents.value.find(item => item.id === a
 const activeEntry = computed(() => entries.value.find(item => item.key === activeDocument.value?.entryKey));
 const uploadEntry = computed(() => entries.value.find(item => item.key === uploadKey.value));
 const selectedTrack = computed(() => activeDocument.value?.resource.kind === 'track' ? activeEntry.value?.edit.tracks[activeDocument.value.resource.index] : null);
+const selectedDocument = computed(() => activeDocument.value?.resource.kind === 'document' ? activeEntry.value?.edit.documents[activeDocument.value.resource.index] : null);
 const linkedTracks = computed(() => selectedTrack.value ? documentModel.linkedInstrumentalTracks(activeEntry.value.edit, selectedTrack.value) : []);
 const activeViews = computed(() => activeEntry.value ? viewsFor(activeDocument.value.resource) : []);
 const dirtyEntries = computed(() => entries.value.filter(entry => entry.revision !== entry.savedRevision));
@@ -140,6 +143,7 @@ function updateTrack(track, entry = activeEntry.value) {
   }
 }
 function updateAlbum() { markDirty(); refreshDocumentTitles(activeEntry.value); }
+function updateDocument(text) { if (!selectedDocument.value || activeEntry.value.readOnly) return; selectedDocument.value.text = text; markDirty(activeEntry.value, { kind: 'album' }); }
 function updateAssets(assets, entry = activeEntry.value) { if (!entry || entry.readOnly) return; entry.edit.assets = assets; markDirty(entry, { kind: 'album' }); }
 function updatePendingFiles(files, entry = activeEntry.value) { if (!entry || entry.readOnly) return; entry.pendingFiles = files.map(item => { const old = entry.pendingFiles.find(value => value.id === item.id); return old && old.raw !== item.raw ? { ...item, transfer: undefined, uploaded: false } : item; }); markDirty(entry, { kind: 'album' }); }
 function replaceAsset(payload, entry = activeEntry.value) {
@@ -182,8 +186,29 @@ async function refresh() {
     }
   } catch (error) { if (!disposed) setStatus(`读取失败：${error.message || '网络错误'}`, true); } finally { refreshing = false; }
 }
-function requestAlbum(afterUpload = false) { if (!busy.value) createDialog.value = { kind: 'album', name: '', afterUpload: afterUpload === true }; }
+function requestAlbum() { if (busy.value) return; const existing = documents.value.find(doc => doc.id === 'virtual:new-album'); if (existing) return activeId.value = existing.id; documents.value.push({ id: 'virtual:new-album', resource: { kind: 'virtual' }, view: 'new-album', title: '新建专辑', entryKey: '', dirty: false }); activeId.value = 'virtual:new-album'; }
 function requestTrack(key) { const entry = entries.value.find(item => item.key === key) || activeEntry.value; if (!entry) return requestAlbum(); if (!busy.value && flushCurrent()) createDialog.value = { kind: 'track', name: '', entryKey: entry.key }; }
+async function requestDocument({ key, kind, name }) {
+  if (busy.value || !name?.trim()) return;
+  const entry = entries.value.find(item => item.key === key);
+  if (!entry || entry.origin !== 'workspace' || entry.readOnly) return;
+  busy.value = true;
+  try { const result = await api.document(entry.ref, kind, name.trim()); entry.edit.documents ||= []; entry.edit.documents.push(result.document); markDirty(entry, { kind: 'album' }); setStatus('已创建'); }
+  catch (error) { setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
+}
+async function createAlbumFromCard({ album, submissionType, files }) {
+  if (busy.value) return; busy.value = true;
+  try {
+    const result = await api.create(album, submissionType);
+    const entry = replaceEntry(entryFrom('workspace', result.ref, result.draft.album || album, result.draft));
+    busy.value = false;
+    queueAssets(files, entry);
+    if (files.length && !(await saveActive(entry))) return;
+    if (!expanded.value.includes(entry.key)) expanded.value.push(entry.key);
+    documents.value = documents.value.filter(doc => doc.id !== 'virtual:new-album');
+    const node = explorerTree(toDraft(entry.edit), entry)[0]; openNode(node, entry.key); uploadKey.value = entry.key;
+  } catch (error) { setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
+}
 async function confirmCreate() {
   const dialog = createDialog.value; if (!dialog || busy.value || !dialog.name.trim()) return;
   busy.value = true;
@@ -198,8 +223,10 @@ async function confirmCreate() {
       entry.edit.tracks.push(track); markDirty(entry, { kind: 'track', index: entry.edit.tracks.length - 1 });
       node = explorerTree(toDraft(entry.edit), entry)[0].children.at(-1);
     } else {
-      const result = await api.create(dialog.name.trim());
-      entry = replaceEntry(entryFrom('workspace', result.ref, result.draft.album || dialog.name.trim(), result.draft));
+      entry = entries.value.find(item => item.key === dialog.entryKey);
+      if (!entry || entry.origin !== 'workspace') throw new Error('当前专辑不可新建文件');
+      const result = await api.document(entry.ref, dialog.kind, dialog.name.trim());
+      entry.edit.documents ||= []; entry.edit.documents.push(result.document); markDirty(entry, { kind: 'album' });
       node = explorerTree(toDraft(entry.edit), entry)[0];
     }
     if (!expanded.value.includes(entry.key)) expanded.value.push(entry.key);
@@ -218,7 +245,7 @@ async function retryPending(item) { try { await api.retry(item.ref); await refre
 function removeEntry(entry) { entries.value = entries.value.filter(item => item.key !== entry.key); documents.value = documents.value.filter(doc => doc.entryKey !== entry.key); if (!activeDocument.value) activeId.value = documents.value.at(-1)?.id || ''; }
 async function discardPending(item) { if (!window.confirm(`丢弃「${item.album}」的审核草稿及未保存修改？`)) return; try { await api.discard(item.ref, item.storage_album); for (const entry of entries.value.filter(entry => entry.origin === 'ingest' && entry.ref === item.ref && entry.storageAlbum === item.storage_album)) removeEntry(entry); await refresh(); } catch (error) { setStatus(`丢弃失败：${error.message}`, true); } }
 async function discardDraft(key) { const entry = entries.value.find(item => item.key === key); if (!entry || busy.value || !window.confirm(`丢弃「${entry.edit.album}」的草稿及未保存修改？`)) return; try { if (entry.origin === 'ingest') await api.discard(entry.ref, entry.storageAlbum); else await api.workspaceDiscard(entry.ref); removeEntry(entry); await refresh(); } catch (error) { setStatus(`丢弃失败：${error.message}`, true); } }
-function openUpload() { if (activeEntry.value) uploadKey.value = activeEntry.value.key; else requestAlbum(true); }
+function openUpload(key) { const entry = entries.value.find(item => item.key === key) || activeEntry.value; if (entry && !entry.readOnly) uploadKey.value = entry.key; }
 function queueAssets(files, entry = activeEntry.value) {
   if (!entry || entry.readOnly || uploading.value) return;
   const known = new Set([...entry.edit.assets.map(item => item.path), ...entry.pendingFiles.map(item => item.path || item.name)].map(name => String(name).toLowerCase()));

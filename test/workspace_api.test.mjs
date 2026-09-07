@@ -81,6 +81,23 @@ test('new LRC workspace rejects unsafe drafts and submits registered assets thro
   assert.equal(duplicate.status, 200);
 });
 
+test('workspace documents and folders persist through save and draft refresh', async () => {
+  const bucket = fakeBucket(); const target = env(bucket);
+  const created = await (await handleApi(authedRequest('https://x/api/workspace/create', { method: 'POST', body: { album: '文档专辑', submission_type: 'single' } }), target)).json();
+  const folder = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'folder', path: 'lyrics' } }), target);
+  assert.equal(folder.status, 200);
+  const file = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'lyrics/notes.txt' } }), target);
+  assert.equal(file.status, 200);
+  const saved = JSON.parse(bucket.store.get(`workspace/${created.ref}/draft.json`));
+  saved.documents[1].text = '保存后仍可读取';
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/save', { method: 'POST', body: { ref: created.ref, draft: saved } }), target)).status, 200);
+  const refreshed = await (await handleApi(authedRequest(`https://x/api/workspace/draft?ref=${created.ref}`), target)).json();
+  assert.equal(refreshed.draft.submission_type, 'single');
+  assert.deepEqual(refreshed.draft.documents, [{ kind: 'folder', path: 'lyrics' }, { kind: 'file', path: 'lyrics/notes.txt', text: '保存后仍可读取' }]);
+  const duplicate = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'lyrics/notes.txt' } }), target);
+  assert.equal(duplicate.status, 409);
+});
+
 test('published word timings are submitted as an ELRC sidecar', async () => {
   const bucket = fakeBucket(); const target = env(bucket);
   const opened = await (await handleApi(authedRequest('https://x/api/workspace/open', { method: 'POST', body: { slug: 'demo_album' } }), target)).json();

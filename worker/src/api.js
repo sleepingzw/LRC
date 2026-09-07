@@ -9,7 +9,7 @@ import { onRequestPost as retryIngest } from '../../functions/api/ingest/retry.j
 import { onRequestPost as saveIngest } from '../../functions/api/ingest/save.js';
 import { onRequestGet as stateIngest } from '../../functions/api/ingest/state.js';
 import { onRequestGet as audioIngest } from '../../functions/api/ingest/audio.js';
-import { onAssetPost, onAudioGet, onCatalogGet, onCreatePost, onDraftGet, onExtractPost, onListGet, onLrcPost, onOpenPost, onSavePost } from '../../functions/api/workspace.js';
+import { onAssetPost, onAudioGet, onCatalogGet, onCreatePost, onDocumentPost, onDraftGet, onExtractPost, onListGet, onLrcPost, onOpenPost, onSavePost } from '../../functions/api/workspace.js';
 import { onRequestPost as authBootstrap } from '../../functions/api/auth/bootstrap.js';
 import { onRequestPost as authRegister } from '../../functions/api/auth/register.js';
 import { onRequestPost as authLogin } from '../../functions/api/auth/login.js';
@@ -52,6 +52,7 @@ const ROUTES = new Map([
   ['POST /api/workspace/create', onCreatePost],
   ['POST /api/workspace/open', onOpenPost],
   ['POST /api/workspace/lrc', onLrcPost],
+  ['POST /api/workspace/document', onDocumentPost],
   ['POST /api/workspace/save', onSavePost],
   ['POST /api/workspace/asset', onAssetPost],
   ['GET /api/workspace/audio', onAudioGet],

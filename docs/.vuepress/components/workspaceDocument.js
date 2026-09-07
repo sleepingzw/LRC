@@ -76,6 +76,7 @@ export function toEdit(album, draft, newId) {
     meta,
     names: { prefix: '', zh_name: '', en_name: '', suffix: '', ...(draft.names || {}) },
     assets: (draft.assets || []).map((asset) => ({ ...asset, linkTo: [...(asset.linkTo || [])] })),
+    documents: (draft.documents || []).map((item) => ({ ...item })),
     submissionType: draft.submission_type || 'album',
     _activePane: 'meta',
     _selectedTrack: 0,
@@ -149,7 +150,7 @@ export function toDraft(e) {
   const album = cleanAlbumName(e.album, e._originalAlbum);
   const names = Object.fromEntries(Object.entries(e.names).map(([key, value]) => [key, String(value || '').trim()]));
   if (!names.zh_name && !names.en_name) names[/[\u3400-\u9fff]/.test(album) ? 'zh_name' : 'en_name'] = album;
-  return { ...e._draft, album, submission_type: e.submissionType, names, meta, tracks, pages: e.pages, assets: e.assets.map((asset) => ({ ...asset, linkTo: [...asset.linkTo] })), cover_ext: e.coverRemoved ? '' : e.coverExt };
+  return { ...e._draft, album, submission_type: e.submissionType, names, meta, tracks, pages: e.pages, documents: e.documents.map((item) => ({ ...item })), assets: e.assets.map((asset) => ({ ...asset, linkTo: [...asset.linkTo] })), cover_ext: e.coverRemoved ? '' : e.coverExt };
 }
 
 export function documentId(resource, view) {
@@ -157,7 +158,7 @@ export function documentId(resource, view) {
 }
 
 export function viewsFor(resource) {
-  return resource.kind === 'track' ? ['timing', 'text:lrc', 'text:elrc'] : ['meta', 'text:json', 'assets'];
+  return resource.kind === 'track' ? ['timing', 'text:lrc', 'text:elrc'] : resource.kind === 'document' ? ['text:document'] : ['meta', 'text:json', 'assets'];
 }
 
 const AUDIO_RE = /\.(mp3|flac|wav|m4a|aac|ogg|opus|wma|aiff?)$/i;
@@ -191,6 +192,10 @@ export function explorerTree(draft, origin) {
       ],
     };
   });
+  const documentNodes = (draft.documents || []).map((item, index) => {
+    const resource = { ...base, kind: 'document', index };
+    return { id: documentId(resource, 'text:document'), type: item.kind === 'folder' ? 'folder' : 'file', label: item.path, resource, view: 'text:document' };
+  });
   return [{
     id: documentId(albumResource, 'meta'),
     type: 'virtual',
@@ -200,6 +205,7 @@ export function explorerTree(draft, origin) {
     children: [
       { id: documentId(albumResource, 'text:json'), type: 'file', label: 'meta.json', resource: albumResource, view: 'text:json' },
       { id: documentId(albumResource, 'assets'), type: 'virtual', label: '素材', resource: albumResource, view: 'assets' },
+      ...documentNodes,
       ...trackNodes,
     ],
   }];

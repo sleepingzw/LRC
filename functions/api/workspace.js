@@ -12,6 +12,7 @@ const MAX_TRACK_BYTES = 256 * 1024;
 const MAX_ASSETS = MAX_FILES;
 const MAX_ASSET_LINKS = 20;
 const ASSET_ROLES = new Set(['song', 'photo', 'text', 'staff', 'cover', 'etc']);
+const DOCUMENT_KINDS = new Set(['file', 'folder']);
 const REF_RE = /^[0-9a-f]{32}$/;
 
 function cleanRef(value) { return typeof value === 'string' && REF_RE.test(value) ? value : null; }
@@ -90,6 +91,7 @@ function validDraft(draft) {
   if (!draft || typeof draft !== 'object' || Array.isArray(draft) || !cleanAlbum(draft.album)) return false;
   if (draft.submission_type !== undefined && !['album', 'single'].includes(draft.submission_type)) return false;
   if (!Array.isArray(draft.tracks) || draft.tracks.length > MAX_FILES) return false;
+  if (draft.documents !== undefined && (!Array.isArray(draft.documents) || draft.documents.length > MAX_FILES || !draft.documents.every((item) => item && DOCUMENT_KINDS.has(item.kind) && typeof item.path === 'string' && !!cleanRelPath(item.path) && (item.kind === 'folder' || typeof item.text === 'string') && new TextEncoder().encode(item.text || '').byteLength <= MAX_TRACK_BYTES))) return false;
   if (draft.assets !== undefined) {
     if (!Array.isArray(draft.assets) || draft.assets.length > MAX_ASSETS || !draft.assets.every(validAsset)) return false;
     const seenAssetNumbers = new Set();
@@ -126,8 +128,8 @@ async function createWorkspace(env, draft, user) {
   return ref;
 }
 
-function emptyDraft(album) {
-  return { album, submission_type: 'album', tracks: [], meta: {}, names: { prefix: '', zh_name: album, en_name: '', suffix: '' }, pages: [], assets: [], source: { kind: 'new' } };
+function emptyDraft(album, submissionType = 'album') {
+  return { album, submission_type: submissionType, tracks: [], documents: [], meta: {}, names: { prefix: '', zh_name: album, en_name: '', suffix: '' }, pages: [], assets: [], source: { kind: 'new' } };
 }
 
 function workspaceLyricsStem(track, order, occupied, assets) {
@@ -176,7 +178,7 @@ export async function onCreatePost({ request, env }) {
   const body = await request.json().catch(() => null);
   const album = cleanAlbum(body?.album);
   if (!album) return json({ error: 'bad album' }, 400);
-  const draft = emptyDraft(album);
+  const draft = emptyDraft(album, body?.submission_type === 'single' ? 'single' : 'album');
   const ref = await createWorkspace(env, draft, auth.user);
   return ref ? json({ ok: true, ref, draft }) : json({ error: 'workspace unavailable' }, 503);
 }
@@ -224,6 +226,22 @@ export async function onLrcPost({ request, env }) {
   const status = current;
   await Promise.all([writeJson(env, `${ROOT}/${ref}/draft.json`, draft), writeJson(env, `${ROOT}/${ref}/status.json`, { ...status, updated: nowStamp(), source: draft.source?.kind || 'new', updated_by: auth.user.github || auth.user.name })]);
   return json({ ok: true, ref, track });
+}
+
+export async function onDocumentPost({ request, env }) {
+  const auth = await userFor(request, env); if (auth.error) return auth.error;
+  const body = await request.json().catch(() => null);
+  const ref = cleanRef(body?.ref); const kind = body?.kind;
+  const path = typeof body?.path === 'string' ? body.path.normalize('NFC').trim() : '';
+  if (!ref || !DOCUMENT_KINDS.has(kind) || !cleanRelPath(path) || (kind === 'file' && !/\.(?:lrc|elrc|txt|json)$/i.test(path))) return json({ error: 'bad document' }, 400);
+  const current = await writableWorkspace(env, ref); if (!current) return json({ error: 'workspace submitted' }, 409);
+  const draft = await readJson(env, `${ROOT}/${ref}/draft.json`); if (!validDraft(draft)) return json({ error: 'not found' }, 404);
+  const documents = Array.isArray(draft.documents) ? draft.documents : [];
+  if (documents.length >= MAX_FILES || documents.some((item) => item.path.toLowerCase() === path.toLowerCase())) return json({ error: 'file exists or limit reached' }, 409);
+  const document = { kind, path, ...(kind === 'file' ? { text: '' } : {}) };
+  draft.documents = [...documents, document];
+  await Promise.all([writeJson(env, `${ROOT}/${ref}/draft.json`, draft), writeJson(env, `${ROOT}/${ref}/status.json`, { ...current, updated: nowStamp(), updated_by: auth.user.github || auth.user.name })]);
+  return json({ ok: true, ref, document });
 }
 
 // 登记已通过 /api/upload/r2 或 /api/upload/multipart 直传到 web/{ref}/{n} 的素材；不搬运字节，只校验后写回草稿。

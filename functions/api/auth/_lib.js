@@ -40,7 +40,7 @@ export async function secretEquals(candidate, expected) {
   return timingSafeEqualHex(a, b);
 }
 
-// PBKDF2-HMAC-SHA256，迭代数入库，取值与实测耗时见 findings.md
+// 遵守 Workers 的 PBKDF2 迭代次数上限。
 export const PBKDF2_ITERATIONS = 100_000;
 const SALT_BYTES = 16;
 export const TOKEN_BYTES = 32;

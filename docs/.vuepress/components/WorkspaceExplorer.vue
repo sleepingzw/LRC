@@ -15,7 +15,7 @@ const writable = entry => entry?.origin === 'workspace' && !entry.readOnly;
 function startCreate(key, kind, parentPath) { if (!props.busy) creating.value = { key, kind, parentPath, name: '', error: '' }; }
 function submitCreate() { if (!creating.value?.name.trim() || props.busy) return; creating.value.error = ''; emit('create-document', { ...creating.value, name: creating.value.name.trim() }); }
 function upload(event, key, parentPath) { const files = Array.from(event.target.files || []); event.target.value = ''; if (files.length) emit('upload', { key, files, parentPath }); }
-watch(() => creating.value && !creating.value.parentPath, async active => { if (active) { await nextTick(); rootInput.value?.focus(); } });
+watch(() => creating.value && !creating.value.parentPath, async active => { if (active) { await nextTick(); (Array.isArray(rootInput.value) ? rootInput.value[0] : rootInput.value)?.focus(); } });
 watch(() => props.creationFeedback.sequence, () => { const feedback = props.creationFeedback; if (!creating.value || feedback.key !== creating.value.key) return; if (feedback.ok) creating.value = null; else creating.value.error = feedback.error || '创建失败'; });
 const failed = item => item?.state === 'failed' || item?.status === 'failed'; const processing = item => ['queued', 'dispatching', 'running', 'processing', 'submitted', 'job_started'].includes(item?.state) || item?.status === 'processing'; const stateLabel = item => failed(item) ? '处理失败' : processing(item) ? '处理中' : item?.state === 'done' ? '已完成' : '待审核';
 </script>

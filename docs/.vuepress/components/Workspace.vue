@@ -68,6 +68,7 @@ const selectedPendingAsset = computed(() => selectedAsset.value ? activeEntry.va
 const linkedTracks = computed(() => selectedTrack.value ? documentModel.linkedInstrumentalTracks(activeEntry.value.edit, selectedTrack.value) : []);
 const activeViews = computed(() => activeEntry.value ? viewsFor(activeDocument.value.resource) : []);
 const dirtyEntries = computed(() => entries.value.filter(entry => entry.revision !== entry.savedRevision));
+const creationDirty = computed(() => documents.value.some(doc => doc.view === 'new-album') && !!(albumCreation.value.album.trim() || albumCreation.value.pendingFiles.length));
 const visiblePending = computed(() => pending.value.filter(item => !entries.value.some(entry => entry.origin === 'ingest' && entry.ref === item.ref && entry.storageAlbum === item.storage_album)));
 const explorerEntries = computed(() => entries.value.filter(entry => !(entry.origin === 'workspace' && entry.readOnly && (pending.value.some(item => item.ref === entry.ref) || entries.value.some(item => item.origin === 'ingest' && item.ref === entry.ref)))).map(entry => ({ key: entry.key, origin: entry.origin, group: entry.edit._draft.source?.kind === 'published' ? 'published' : 'draft', slug: entry.edit._draft.source?.slug, ref: entry.ref, storage_album: entry.storageAlbum, owner: entry.owner, state: typeof entry.state === 'string' ? entry.state : entry.state.job || '', message: entry.message || '', readOnly: entry.readOnly, label: entry.edit.album, dirty: entry.revision !== entry.savedRevision, nodes: explorerTree(toDraft(entry.edit), entry) })));
 const draftEntries = computed(() => explorerEntries.value.filter(entry => entry.group === 'draft'));
@@ -132,6 +133,7 @@ function activate(value) { if (!busy.value && flushCurrent()) activeId.value = v
 function switchView(view) { if (!busy.value && activeDocument.value && flushCurrent()) activeDocument.value.view = view; }
 function closeDocument(value) {
   if (busy.value) return;
+  if (activeId.value === value && !flushCurrent()) return;
   const index = documents.value.findIndex(item => item.id === value); const doc = documents.value[index]; if (!doc) return;
   if (doc.dirty && !window.confirm(`「${doc.title}」尚未保存。关闭标签后修改仍保留在工作区，继续关闭吗？`)) return;
   documents.value.splice(index, 1);
@@ -197,11 +199,11 @@ async function refresh() {
     }
   } catch (error) { if (!disposed) setStatus(`读取失败：${error.message || '网络错误'}`, true); } finally { refreshing = false; }
 }
-function requestAlbum() { if (busy.value) return; const existing = documents.value.find(doc => doc.id === 'virtual:new-album'); if (existing) return activeId.value = existing.id; albumCreation.value = { album: '', submissionType: 'album', pendingFiles: [], createdEntryKey: '' }; documents.value.push({ id: 'virtual:new-album', resource: { kind: 'virtual' }, view: 'new-album', title: '新建专辑', entryKey: '', dirty: false }); activeId.value = 'virtual:new-album'; }
+function requestAlbum() { if (busy.value || !flushCurrent()) return; const existing = documents.value.find(doc => doc.id === 'virtual:new-album'); if (existing) return activeId.value = existing.id; albumCreation.value = { album: '', submissionType: 'album', pendingFiles: [], createdEntryKey: '' }; documents.value.push({ id: 'virtual:new-album', resource: { kind: 'virtual' }, view: 'new-album', title: '新建专辑', entryKey: '', dirty: false }); activeId.value = 'virtual:new-album'; }
 function findNode(nodes, id) { for (const node of nodes || []) { if (node.id === id) return node; const nested = findNode(node.children, id); if (nested) return nested; } return null; }
 function documentPath(parentPath, name) { return [String(parentPath || '').replace(/^\/+|\/+$/g, ''), String(name || '').replace(/^\/+/, '')].filter(Boolean).join('/'); }
 async function requestDocument({ key, kind, name, parentPath = '' }) {
-  if (busy.value || !name?.trim()) return;
+  if (busy.value || !name?.trim() || !flushCurrent()) return;
   const entry = entries.value.find(item => item.key === key);
   if (!entry || entry.origin !== 'workspace' || entry.readOnly) return;
   const path = documentPath(parentPath, name.trim());
@@ -220,28 +222,31 @@ async function requestDocument({ key, kind, name, parentPath = '' }) {
     if (!expanded.value.includes(entry.key)) expanded.value.push(entry.key);
     creationFeedback.value = { sequence: creationFeedback.value.sequence + 1, key, ok: true };
     busy.value = false;
-    if (node) openNode(node, entry.key);
+    if (node && kind !== 'folder') openNode(node, entry.key);
     setStatus('已创建');
   } catch (error) { creationFeedback.value = { sequence: creationFeedback.value.sequence + 1, key, ok: false, error: `创建失败：${error.message}` }; setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
 }
 function queueCreation(files) { const known = new Set(albumCreation.value.pendingFiles.map(item => item.path.toLowerCase())); for (const raw of Array.from(files || [])) { const path = raw.webkitRelativePath || raw.name; if (!known.has(path.toLowerCase())) { known.add(path.toLowerCase()); albumCreation.value.pendingFiles.push({ id: newId(), raw, name: path, path, role: assetRole(path), linkTo: [] }); } } }
 async function createAlbumFromCard() {
   if (busy.value) return; busy.value = true;
+  let entry;
   try {
     const { album, submissionType, pendingFiles } = albumCreation.value;
-    let entry = entries.value.find(item => item.key === albumCreation.value.createdEntryKey);
+    entry = entries.value.find(item => item.key === albumCreation.value.createdEntryKey);
     if (!entry) {
       const result = await api.create(album, submissionType);
       entry = replaceEntry(entryFrom('workspace', result.ref, result.draft.album || album, result.draft));
-      entry.pendingFiles = pendingFiles;
       albumCreation.value = { ...albumCreation.value, createdEntryKey: entry.key };
     }
+    entry.edit.album = album.trim();
+    entry.edit.submissionType = submissionType;
+    updatePendingFiles(pendingFiles, entry);
     busy.value = false;
-    if (pendingFiles.length && !(await saveActive(entry))) return;
+    if (!(await saveActive(entry))) return;
     if (!expanded.value.includes(entry.key)) expanded.value.push(entry.key);
     documents.value = documents.value.filter(doc => doc.id !== 'virtual:new-album');
     const node = explorerTree(toDraft(entry.edit), entry)[0]; openNode(node, entry.key);
-  } catch (error) { setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
+  } catch (error) { setStatus(`创建失败：${error.message}`, true); } finally { if (entry) albumCreation.value.pendingFiles = entry.pendingFiles; busy.value = false; }
 }
 async function openCatalog(item) {
   if (busy.value || !flushCurrent()) return;
@@ -303,6 +308,13 @@ async function uploadPending(entry) {
       if (entry.origin === 'workspace') await api.asset(entry.ref, item.replace ? { ...asset, replace_n: item.replace.n } : asset);
       const oldIndex = item.replace ? entry.edit.assets.findIndex(value => value.n === item.replace.n) : entry.edit.assets.findIndex(value => value.n === asset.n);
       if (oldIndex >= 0) entry.edit.assets.splice(oldIndex, 1, asset); else entry.edit.assets.push(asset);
+      if (item.replace) for (const doc of documents.value.filter(doc => doc.entryKey === entry.key && doc.resource.kind === 'asset' && doc.resource.index === item.replace.n)) {
+        const wasActive = activeId.value === doc.id;
+        doc.resource = { ...doc.resource, index: asset.n };
+        doc.id = documentId(doc.resource, 'asset');
+        doc.title = asset.path.split('/').at(-1);
+        if (wasActive) activeId.value = doc.id;
+      }
       if (asset.role === 'cover') { entry.edit.coverExt = (asset.path.match(/\.[a-z0-9]+$/i) || ['.png'])[0].toLowerCase(); entry.edit.coverRemoved = false; }
       entry.pendingFiles = entry.pendingFiles.filter(value => value.id !== item.id);
     }
@@ -357,9 +369,10 @@ async function loadMedia() {
 }
 function cleanupMedia() { mediaAbort?.abort(); mediaAbort = null; mediaVersion += 1; for (const url of [audioUrl.value, coverUrl.value, ...Object.values(pageUrls.value)].filter(Boolean)) URL.revokeObjectURL(url); audioUrl.value = ''; coverUrl.value = ''; pageUrls.value = {}; }
 function pageUrl(page) { return pageUrls.value[page.name] || ''; }
-function canLeave() { return !dirtyEntries.value.length || window.confirm('存在未保存修改或上传队列，确定离开吗？'); }
+function canLeave() { return (!dirtyEntries.value.length && !creationDirty.value) || window.confirm('存在未保存修改或上传队列，确定离开吗？'); }
 function openVirtualView(view) { if (!['account', 'users'].includes(view) || !flushCurrent()) return; let doc = documents.value.find(item => item.id === `virtual:${view}`); if (!doc) { doc = { id: `virtual:${view}`, resource: { kind: 'virtual' }, view, title: viewLabel(view), entryKey: '', dirty: false }; documents.value.push(doc); } activeId.value = doc.id; }
-function leaveWarning(event) { if (!dirtyEntries.value.length) return; event.preventDefault(); event.returnValue = ''; }
+function leaveWarning(event) { if (!dirtyEntries.value.length && !creationDirty.value) return; event.preventDefault(); event.returnValue = ''; }
+watch(creationDirty, dirty => { const doc = documents.value.find(doc => doc.view === 'new-album'); if (doc) doc.dirty = dirty; });
 watch(() => [activeId.value, activeDocument.value?.view, selectedTrack.value?._id], () => { jsonMessage.value = ''; jsonError.value = false; loadMedia(); });
 defineExpose({ canLeave, openVirtualView });
 onMounted(() => { refresh(); pollTimer = setInterval(refresh, 12000); window.addEventListener('beforeunload', leaveWarning); });

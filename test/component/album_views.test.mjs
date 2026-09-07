@@ -61,6 +61,17 @@ describe('具体素材文件视图', () => {
     const view = assetMount({ asset: { path: 'cover.png', role: 'cover' }, pendingFile: { id: 'p2', raw, path: 'cover.png', role: 'cover' }, readOnly: true }); await flushPromises();
     expect(view.get('img').attributes('src')).toBe('blob:image'); expect(view.text()).not.toContain('旋转 / 马赛克'); view.unmount(); URL.createObjectURL = create;
   });
+  it('图片重新编码后保留目录并更新扩展名', async () => {
+    const raw = new File(['image'], 'cover.webp', { type: 'image/webp' });
+    const create = URL.createObjectURL; URL.createObjectURL = () => 'blob:image';
+    const view = assetMount({ asset: { n: 1, path: 'images/cover.webp', role: 'cover' }, loadAsset: async () => raw });
+    try {
+      await flushPromises(); await view.get('button').trigger('click');
+      const edited = new File(['edited'], 'cover.jpg', { type: 'image/jpeg' });
+      view.findComponent({ name: 'ImageEditDialog' }).vm.$emit('save', edited);
+      expect(view.emitted('replace').at(-1)[0]).toMatchObject({ path: 'images/cover.jpg', file: edited });
+    } finally { view.unmount(); URL.createObjectURL = create; }
+  });
   it('切换素材时不会显示过期异步加载结果', async () => {
     let first; let second; const loadAsset = (asset) => new Promise((resolve) => { if (asset.n === 1) first = resolve; else second = resolve; });
     const view = assetMount({ asset: { n: 1, path: 'first.txt', role: 'text' }, loadAsset }); await view.setProps({ asset: { n: 2, path: 'second.txt', role: 'text' } });

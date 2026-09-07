@@ -39,6 +39,28 @@ function saved(calls) { return calls.filter(call => call.path === '/api/workspac
 async function importFile(w, file) { const input = w.get('.workspace-upload-action input[type=file]'); Object.defineProperty(input.element, 'files', { configurable: true, value: [file] }); await input.trigger('change'); await flushPromises(); }
 
 describe('文件工作区真实组件流', () => {
+  it('根目录内联输入自动聚焦，新建空目录不打开编辑标签', async () => {
+    const { w } = await setup(draft([], {}), { '/api/workspace/document': ({ body }) => reply({ document: { kind: body.kind, path: body.path } }) });
+    await w.get('[aria-label="新建文件夹 专辑"]').trigger('click'); await flushPromises();
+    const input = w.get('[aria-label="新建文件夹名称"]'); expect(document.activeElement).toBe(input.element);
+    await input.setValue('素材目录'); await w.get('.workspace-tree-create').trigger('submit'); await flushPromises();
+    expect(w.findAll('[role=tab]')).toHaveLength(0); await openFile(w, '素材目录'); expect(w.findAll('[role=tab]')).toHaveLength(0);
+  });
+  it('具体素材的未应用文本在切换和保存后保留，替换编号不会丢失当前编辑器', async () => {
+    let bytes = '旧词';
+    const { w, calls, uploads } = await setup(draft([], { assets: [{ n: 7, path: 'notes.txt', size: 6, role: 'text', linkTo: [] }] }), {
+      '/api/workspace/media': () => new Response(bytes, { headers: { 'content-type': 'text/plain' } }),
+      '/api/workspace/asset': () => { bytes = '未应用的新词'; return reply({ ok: true }); },
+    });
+    await openFile(w, 'notes.txt'); await w.get('[aria-label="编辑 notes.txt"]').setValue('未应用的新词');
+    await button(w, '新建专辑').trigger('click'); await openFile(w, 'notes.txt');
+    expect(w.get('[aria-label="编辑 notes.txt"]').element.value).toBe('未应用的新词');
+    await button(w, '保存').trigger('click'); await flushPromises();
+    expect(calls.find(call => call.path === '/api/workspace/asset').body).toMatchObject({ n: 8, replace_n: 7 });
+    expect(await uploads[0].file.text()).toBe('未应用的新词');
+    expect(w.get('[aria-label="编辑 notes.txt"]').element.value).toBe('未应用的新词');
+    await button(w, '保存').trigger('click'); await flushPromises(); expect(uploads).toHaveLength(1);
+  });
   it('一个Explorer包含草稿与成品区；ELRC/LRC独立标签，renderer切换原位', async () => {
     const { w } = await setup(); expect(w.findAll('.workspace-explorer')).toHaveLength(1); expect(w.text()).toContain('成品修改');
     await w.get('[aria-label="聚合调轴 01 主歌"]').trigger('click'); await flushPromises(); expect(w.findComponent({ name: 'TrackTimingView' }).exists()).toBe(true);
@@ -180,13 +202,14 @@ describe('文件工作区真实组件流', () => {
   it('新建专辑保留内容选择卡状态，上传失败重试不重复创建草稿', async () => {
     let uploadFails = true; const { w, calls } = await setup(draft(), { '/api/workspace/create': ({ body }) => reply({ ref: 'created', draft: draft([], { album: body.album }) }), '/api/workspace/asset': () => uploadFails ? reply({ error: 'retry' }, 503) : reply({ ok: true }) });
     await button(w, '新建专辑').trigger('click'); await w.get('[aria-label="专辑名称"]').setValue('新专辑'); const input = w.get('.album-creation-card input[type=file]'); Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['x'], 'cover.png', { type: 'image/png' })] }); await input.trigger('change'); await button(w, '创建并上传').trigger('click'); await flushPromises();
-    expect(w.get('[aria-label="专辑名称"]').element.value).toBe('新专辑'); expect(calls.filter(call => call.path === '/api/workspace/create')).toHaveLength(1); uploadFails = false; await button(w, '创建并上传').trigger('click'); await flushPromises(); expect(calls.filter(call => call.path === '/api/workspace/create')).toHaveLength(1);
+    expect(w.get('[aria-label="专辑名称"]').element.value).toBe('新专辑'); expect(calls.filter(call => call.path === '/api/workspace/create')).toHaveLength(1);
+    await w.get('[aria-label="专辑名称"]').setValue('重试后的名称'); uploadFails = false; await button(w, '创建并上传').trigger('click'); await flushPromises(); expect(calls.filter(call => call.path === '/api/workspace/create')).toHaveLength(1); expect(saved(calls).album).toBe('重试后的名称');
   });
   it('新专辑卡中的歌词文本可编辑，创建时上传修改后的原文', async () => {
     const { w, uploads } = await setup(draft(), { '/api/workspace/create': ({ body }) => reply({ ref: 'created', draft: draft([], { album: body.album }) }) });
     await button(w, '新建专辑').trigger('click'); await w.get('[aria-label="专辑名称"]').setValue('文本专辑');
     const input = w.get('.album-creation-card input[type=file]'); const lyric = new File(['旧歌词'], 'song.elrc', { type: 'text/plain' }); Object.defineProperty(lyric, 'webkitRelativePath', { value: 'lyrics/song.elrc' }); Object.defineProperty(input.element, 'files', { configurable: true, value: [lyric] }); await input.trigger('change');
-    const assets = w.findComponent({ name: 'AlbumAssetsView' }); const pending = assets.props('pendingFiles')[0]; assets.vm.$emit('update-pending', [{ ...pending, raw: new File(['新歌词'], 'song.elrc', { type: 'text/plain' }), size: 9 }]); await flushPromises(); await button(w, '创建并上传').trigger('click'); await flushPromises();
+    await w.get('[aria-label="编辑文本 lyrics/song.elrc"]').trigger('click'); await flushPromises(); await w.get('[aria-label="素材文本编辑器"]').setValue('新歌词'); await button(w, '应用文本修改').trigger('click'); await flushPromises(); await button(w, '创建并上传').trigger('click'); await flushPromises();
     expect(await uploads[0].file.text()).toBe('新歌词');
   });
   it('目录内联新建普通文件与歌词映射，错误保留输入且文件在右侧打开', async () => {

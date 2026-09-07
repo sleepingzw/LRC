@@ -23,11 +23,11 @@ const pendingRaw=computed(()=>props.pendingFile?.raw || null); const path=comput
 const formatSize=(value)=>{ const size=Number(value)||0; return size >= 1024*1024 ? `${(size/1024/1024).toFixed(1)} MB` : `${Math.ceil(size/1024)} KB`; };
 function clearUrl(){ if(url.value) URL.revokeObjectURL(url.value); url.value=''; }
 async function load(){ const version=++request; imageEdit.value=false; error.value=''; loading.value=true; clearUrl(); file.value=null; text.value=''; appliedText.value=''; try { const next=pendingRaw.value || await props.loadAsset?.(props.asset); if(!next) throw new Error('文件不可用'); if(version !== request) return; file.value=next; if(isText.value) { const nextText=await next.text(); if(version !== request) return; text.value=nextText; appliedText.value=nextText; } else url.value=URL.createObjectURL(next); } catch (reason) { if(version === request) error.value=`加载失败：${reason.message || '无法读取文件'}`; } finally { if(version === request) loading.value=false; } }
-function updatePending(next){ emit('update-pending', { ...props.pendingFile, raw:next, name:path.value, path:path.value, size:next.size }); }
+function updatePending(next, nextPath=path.value){ emit('update-pending', { ...props.pendingFile, raw:next, name:nextPath, path:nextPath, size:next.size }); }
 function updateText(value){ if(locked.value) return; text.value=value; if(value!==appliedText.value) emit('buffer'); }
 function applyText(){ if(!file.value || locked.value || text.value===appliedText.value) return false; const next=new File([text.value], filename.value,{type:file.value.type || 'text/plain'}); if(props.pendingFile) updatePending(next); else emit('replace',{asset:props.asset,file:next,path:path.value}); file.value=next; appliedText.value=text.value; return true; }
 function flush(){ return applyText(); }
-function applyImage(next){ if(locked.value) return; imageEdit.value=false; if(props.pendingFile) updatePending(next); else emit('replace',{asset:props.asset,file:next,path:path.value}); file.value=next; clearUrl(); url.value=URL.createObjectURL(next); }
+function applyImage(next){ if(locked.value) return; imageEdit.value=false; const nextPath=path.value.replace(/[^/]+$/,next.name); if(props.pendingFile) updatePending(next,nextPath); else emit('replace',{asset:props.asset,file:next,path:nextPath}); file.value=next; clearUrl(); url.value=URL.createObjectURL(next); }
 defineExpose({ flush });
 watch(()=>[props.asset,props.pendingFile],load,{immediate:true,deep:false}); onBeforeUnmount(()=>{ request+=1; clearUrl(); });
 </script>

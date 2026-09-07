@@ -371,11 +371,12 @@ export async function onAssetPost({ request, env }) {
   const body = await request.json().catch(() => null);
   const ref = cleanRef(body?.ref);
   const n = cleanIndex(body?.n);
+  const replace_n = body?.replace_n === undefined ? null : cleanIndex(body.replace_n);
   const path = cleanRelPath(body?.path);
   const role = cleanAssetRole(body?.role);
   const size = Number(body?.size);
   const linkTo = Array.isArray(body?.linkTo) ? body.linkTo : [];
-  if (!ref || n === null || !path || !role || !Number.isInteger(size) || size <= 0
+  if (!ref || n === null || (body?.replace_n !== undefined && replace_n === null) || !path || !role || !Number.isInteger(size) || size <= 0
     || linkTo.length > MAX_ASSET_LINKS || !linkTo.every(validAssetLink)) return json({ error: 'bad request' }, 400);
   const current = await writableWorkspace(env, ref);
   if (!current) return json({ error: 'workspace submitted' }, 409);
@@ -383,10 +384,12 @@ export async function onAssetPost({ request, env }) {
   if (!validDraft(draft)) return json({ error: 'not found' }, 404);
   const assets = Array.isArray(draft.assets) ? draft.assets : [];
   if (!assets.some((item) => item.n === n) && assets.length >= MAX_ASSETS) return json({ error: 'too many assets' }, 400);
+  const replaced = replace_n === null ? null : assets.find((item) => item.n === replace_n);
+  if (replace_n !== null && (!replaced || replace_n === n || assets.some((item) => item.n === n))) return json({ error: 'invalid replacement' }, 409);
   const object = await env.UPLOAD_BUCKET.head(`web/${ref}/${n}`);
   if (!object || object.size !== size) return json({ error: 'missing upload', n }, 409);
   const asset = { n, path, role, size, linkTo };
-  const candidate = { ...draft, assets: [...assets.filter((item) => item.n !== n), asset].sort((a, b) => a.n - b.n) };
+  const candidate = { ...draft, assets: [...assets.filter((item) => item.n !== n && item.n !== replace_n), asset].sort((a, b) => a.n - b.n) };
   if (!validDraft(candidate)) return json({ error: 'file path conflict' }, 409);
   draft.assets = candidate.assets;
   const status = current;
@@ -464,6 +467,9 @@ export async function onExtractPost({ request, env }) {
   }
   if (assets.filter((asset) => asset.role === 'cover').length > 1) return json({ error: 'only one cover is allowed' }, 400);
   const seenPaths = new Set(); const seenNumbers = new Set(); const manifestFiles = [];
+  const existingObjectNumbers = new Set((await listPrefix(env, `web/${ref}/`))
+    .map((item) => item.key.match(new RegExp(`^web/${ref}/(\\d+)$`))?.[1])
+    .filter((value) => value !== undefined).map(Number));
   for (const asset of assets) {
     const path = cleanRelPath(asset?.path); const n = cleanIndex(asset?.n); const size = Number(asset?.size);
     if (/\.(?:lrc|elrc)$/i.test(path || '') && replacedStems.has(path.split('/').at(-1).replace(/\.(?:lrc|elrc)$/i, '').toLowerCase())) { seenNumbers.add(n); continue; }
@@ -474,6 +480,7 @@ export async function onExtractPost({ request, env }) {
     if (!object || object.size !== size) return json({ error: 'missing upload', n }, 409);
     seenPaths.add(path.toLowerCase()); seenNumbers.add(n); manifestFiles.push({ path, n, size });
   }
+  for (const n of existingObjectNumbers) if (!seenNumbers.has(n)) seenNumbers.add(n);
   const occupiedPaths = new Set([...seenPaths, ...documentFiles.map((document) => document.path)].map((path) => path.toLocaleLowerCase()));
   const documentFilesToWrite = [];
   for (const document of documentFiles) {

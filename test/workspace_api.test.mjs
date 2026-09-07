@@ -158,6 +158,28 @@ test('asset registration rejects collisions with canonical lyrics and plain text
   assert.equal(plainCollision.status, 400);
 });
 
+test('asset replacement moves the manifest entry to the new number and keeps old bytes unarchived', async () => {
+  const bucket = fakeBucket(); const target = env(bucket);
+  const created = await (await handleApi(authedRequest('https://x/api/workspace/create', { method: 'POST', body: { album: '素材替换' } }), target)).json();
+  await bucket.put(`web/${created.ref}/0`, 'old');
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/asset', { method: 'POST', body: { ref: created.ref, n: 0, path: 'audio/song.mp3', role: 'song', size: 3 } }), target)).status, 200);
+  await bucket.put(`web/${created.ref}/1`, 'new');
+  const replaced = await handleApi(authedRequest('https://x/api/workspace/asset', { method: 'POST', body: { ref: created.ref, n: 1, replace_n: 0, path: 'audio/song.mp3', role: 'song', size: 3 } }), target);
+  assert.equal(replaced.status, 200);
+  const draft = JSON.parse(bucket.store.get(`workspace/${created.ref}/draft.json`));
+  assert.deepEqual(draft.assets, [{ n: 1, path: 'audio/song.mp3', role: 'song', size: 3, linkTo: [] }]);
+  assert.equal((await handleApi(authedRequest(`https://x/api/workspace/audio?ref=${created.ref}&n=0`), target)).status, 404);
+  const media = await handleApi(authedRequest(`https://x/api/workspace/audio?ref=${created.ref}&n=1`), target);
+  assert.equal(media.status, 200);
+  assert.equal(await media.text(), 'new');
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/extract', { method: 'POST', body: { ref: created.ref } }), target)).status, 200);
+  const manifest = JSON.parse(bucket.store.get(`web/${created.ref}/manifest.json`));
+  assert.deepEqual(manifest.files.filter((file) => file.path !== 'manifest.toml'), [{ n: 1, path: 'audio/song.mp3', size: 3 }]);
+  assert.equal(bucket.store.get(`web/${created.ref}/0`), 'old');
+  const invalid = await handleApi(authedRequest('https://x/api/workspace/asset', { method: 'POST', body: { ref: created.ref, n: 2, replace_n: 0, path: 'other.mp3', role: 'song', size: 3 } }), target);
+  assert.equal(invalid.status, 409);
+});
+
 test('published word timings are submitted as an ELRC sidecar', async () => {
   const bucket = fakeBucket(); const target = env(bucket);
   const opened = await (await handleApi(authedRequest('https://x/api/workspace/open', { method: 'POST', body: { slug: 'demo_album' } }), target)).json();

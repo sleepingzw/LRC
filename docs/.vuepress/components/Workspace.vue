@@ -13,7 +13,7 @@
         <WorkspaceTabs :documents="documents" :active-id="activeId" @activate="activate" @close="closeDocument" />
         <section v-if="activeDocument" class="workspace-editor">
           <header class="workspace-editor-head"><span class="workspace-breadcrumb">{{ activeEntry?.edit.album || '工作站' }} / {{ activeDocument.title }}</span><span class="workspace-spacer" /><select v-if="activeEntry" :value="activeDocument.view" aria-label="切换编辑视图" :disabled="busy" @change="switchView($event.target.value)"><option v-for="view in activeViews" :key="view" :value="view">{{ viewLabel(view) }}</option></select></header>
-          <AlbumCreationCard v-if="activeDocument.view === 'new-album'" @cancel="closeDocument(activeDocument.id)" @create="createAlbumFromCard" />
+          <AlbumCreationCard v-if="activeDocument.view === 'new-album'" :model="albumCreation" :busy="busy" :theme="theme" @update:model="albumCreation = $event" @import="queueCreation" @cancel="closeDocument(activeDocument.id)" @create="createAlbumFromCard" />
           <div v-else-if="selectedTrack && linkedTracks.length" class="workspace-sync"><label><input v-model="selectedTrack._syncInstrumental" type="checkbox" :disabled="busy || activeEntry.readOnly || selectedTrack.authoritativeLrc">同步修改伴奏歌词</label><span>{{ linkedTracks.map(track => track.title).join('、') }}</span></div>
           <div v-if="activeDocument.view !== 'new-album'" class="workspace-content" :class="{ 'source-content': activeDocument.view.startsWith('text:') }" :inert="busy || undefined">
             <slot v-if="activeDocument.view === 'account'" name="account" /><slot v-else-if="activeDocument.view === 'users'" name="users" />
@@ -55,7 +55,7 @@ const props = defineProps({ theme: { type: String, default: 'light' }, user: { t
 const emit = defineEmits(['unauthorized', 'account', 'users']);
 const entries = ref([]); const catalog = ref([]); const pending = ref([]); const documents = ref([]); const activeId = ref(''); const expanded = ref([]);
 const busy = ref(false); const uploading = ref(false); const uploadProgress = ref(''); const status = ref(''); const statusError = ref(false); const audioUrl = ref(''); const coverUrl = ref(''); const pageUrls = ref({});
-const jsonMessage = ref(''); const jsonError = ref(false); const uploadKey = ref(''); const createDialog = ref(null);
+const jsonMessage = ref(''); const jsonError = ref(false); const uploadKey = ref(''); const createDialog = ref(null); const albumCreation = ref({ album: '', submissionType: 'album', pendingFiles: [] });
 let id = 0; let pollTimer; let refreshing = false; let disposed = false; let mediaAbort; let mediaVersion = 0; const transferAbort = new AbortController();
 const newId = () => `workspace-${++id}`;
 const api = new Proxy(createWorkspaceAdapter(), { get(target, key) { const value = target[key]; return typeof value !== 'function' ? value : async (...args) => { try { return await value(...args); } catch (error) { if (error?.status === 401) emit('unauthorized'); throw error; } }; } });
@@ -186,7 +186,7 @@ async function refresh() {
     }
   } catch (error) { if (!disposed) setStatus(`读取失败：${error.message || '网络错误'}`, true); } finally { refreshing = false; }
 }
-function requestAlbum() { if (busy.value) return; const existing = documents.value.find(doc => doc.id === 'virtual:new-album'); if (existing) return activeId.value = existing.id; documents.value.push({ id: 'virtual:new-album', resource: { kind: 'virtual' }, view: 'new-album', title: '新建专辑', entryKey: '', dirty: false }); activeId.value = 'virtual:new-album'; }
+function requestAlbum() { if (busy.value) return; const existing = documents.value.find(doc => doc.id === 'virtual:new-album'); if (existing) return activeId.value = existing.id; albumCreation.value = { album: '', submissionType: 'album', pendingFiles: [] }; documents.value.push({ id: 'virtual:new-album', resource: { kind: 'virtual' }, view: 'new-album', title: '新建专辑', entryKey: '', dirty: false }); activeId.value = 'virtual:new-album'; }
 function requestTrack(key) { const entry = entries.value.find(item => item.key === key) || activeEntry.value; if (!entry) return requestAlbum(); if (!busy.value && flushCurrent()) createDialog.value = { kind: 'track', name: '', entryKey: entry.key }; }
 async function requestDocument({ key, kind, name }) {
   if (busy.value || !name?.trim()) return;
@@ -196,17 +196,19 @@ async function requestDocument({ key, kind, name }) {
   try { const result = await api.document(entry.ref, kind, name.trim()); entry.edit.documents ||= []; entry.edit.documents.push(result.document); markDirty(entry, { kind: 'album' }); setStatus('已创建'); }
   catch (error) { setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
 }
-async function createAlbumFromCard({ album, submissionType, files }) {
+function queueCreation(files) { const known = new Set(albumCreation.value.pendingFiles.map(item => item.path.toLowerCase())); for (const raw of Array.from(files || [])) { const path = raw.webkitRelativePath || raw.name; if (!known.has(path.toLowerCase())) { known.add(path.toLowerCase()); albumCreation.value.pendingFiles.push({ id: newId(), raw, name: path, path, role: assetRole(path), linkTo: [] }); } } }
+async function createAlbumFromCard() {
   if (busy.value) return; busy.value = true;
   try {
+    const { album, submissionType, pendingFiles } = albumCreation.value;
     const result = await api.create(album, submissionType);
     const entry = replaceEntry(entryFrom('workspace', result.ref, result.draft.album || album, result.draft));
     busy.value = false;
-    queueAssets(files, entry);
-    if (files.length && !(await saveActive(entry))) return;
+    entry.pendingFiles = pendingFiles;
+    if (pendingFiles.length && !(await saveActive(entry))) return;
     if (!expanded.value.includes(entry.key)) expanded.value.push(entry.key);
     documents.value = documents.value.filter(doc => doc.id !== 'virtual:new-album');
-    const node = explorerTree(toDraft(entry.edit), entry)[0]; openNode(node, entry.key); uploadKey.value = entry.key;
+    const node = explorerTree(toDraft(entry.edit), entry)[0]; openNode(node, entry.key);
   } catch (error) { setStatus(`创建失败：${error.message}`, true); } finally { busy.value = false; }
 }
 async function confirmCreate() {

@@ -1,15 +1,2 @@
-<template>
-  <section class="album-creation-card" aria-label="新建专辑内容选择">
-    <header><strong>新建专辑</strong><p>先选择素材，再建立可编辑的专辑草稿。</p></header>
-    <label>专辑名称<input v-model="album" aria-label="专辑名称" autofocus required></label>
-    <label>投稿类型<select v-model="submissionType" aria-label="投稿类型"><option value="album">专辑</option><option value="single">单曲</option></select></label>
-    <label class="album-creation-files">选择或拖入文件和文件夹<input ref="input" type="file" multiple webkitdirectory @change="collect($event.target.files)"><span @dragover.prevent @drop.prevent="collect($event.dataTransfer.files)">{{ files.length ? `已选择 ${files.length} 个文件` : '点击选择，或将素材拖到这里' }}</span></label>
-    <footer><button type="button" @click="$emit('cancel')">取消</button><button class="primary" type="button" :disabled="!album.trim()" @click="$emit('create', { album: album.trim(), submissionType, files })">创建并打开素材</button></footer>
-  </section>
-</template>
-<script setup>
-import { ref } from 'vue';
-defineEmits(['create', 'cancel']);
-const album = ref(''); const submissionType = ref('album'); const files = ref([]);
-function collect(list) { files.value = Array.from(list || []); }
-</script>
+<template><section class="album-creation-card" aria-label="新建专辑内容选择" @dragover.prevent @drop.prevent="emit('import', $event.dataTransfer.files)"><header><strong>新建专辑</strong><p>先整理素材、用途和关联，再创建草稿。</p></header><div class="album-creation-meta"><label>专辑名称<input :value="model.album" aria-label="专辑名称" autofocus :disabled="busy" @input="patch({ album: $event.target.value })"></label><label>投稿类型<select :value="model.submissionType" aria-label="投稿类型" :disabled="busy" @change="patch({ submissionType: $event.target.value })"><option value="album">专辑</option><option value="single">单曲</option></select></label></div><AlbumAssetsView :assets="[]" :pending-files="model.pendingFiles" :tracks="[]" :uploading="busy" :theme="theme" @import="emit('import', $event)" @update-pending="patch({ pendingFiles: $event })" /><footer><button type="button" :disabled="busy" @click="$emit('cancel')">取消</button><button class="primary" type="button" :disabled="busy || !model.album.trim()" @click="$emit('create')">创建并上传</button></footer></section></template>
+<script setup>import AlbumAssetsView from './AlbumAssetsView.vue'; const props = defineProps({ model: { type: Object, required: true }, busy: Boolean, theme: String }); const emit = defineEmits(['update:model', 'import', 'cancel', 'create']); function patch(value) { emit('update:model', { ...props.model, ...value }); }</script>

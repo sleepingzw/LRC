@@ -18,8 +18,8 @@ test('工作站主题支持系统默认、持久化选择和可访问切换', as
   assert.match(source, /<option value="dark">暗色<\/option>/);
   assert.match(source, /:data-theme="resolvedTheme"/);
   assert.match(source, /\.wb\[data-theme='dark'\]/);
-  assert.match(source, /--bg-color:#111113/);
-  assert.match(source, /color-scheme: dark/);
+  assert.match(source, /--bg-color:#171719/);
+  assert.match(source, /color-scheme:\s*dark/);
 });
 
 test('工作区外壳接收主题并转交给 Monaco 文件编辑器，Monaco 按主题切换配色', async () => {

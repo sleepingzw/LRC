@@ -524,6 +524,7 @@ export async function onExtractPost({ request, env }) {
   manifestFiles.push(...lrcFiles.map(({ n, path, size }) => ({ n, path, size })));
   let manifestN = 0;
   while (seenNumbers.has(manifestN)) manifestN += 1;
+  if (manifestN >= MAX_FILES) return json({ error: 'too many files' }, 400);
   const lyric_maker = [...new Set((Array.isArray(draft.meta?.lyric_maker) ? draft.meta.lyric_maker : []).filter((name) => typeof name === 'string' && name.trim()).map((name) => name.trim().slice(0, 60)).slice(0, 20))];
   for (const name of [auth.user.display_name, env.REQUIRED_LYRIC_MAKER]) if (name && !lyric_maker.includes(name)) lyric_maker.push(name);
   const manifestText = workspaceManifest({ ...draft, meta: { ...draft.meta, lyric_maker } }, assets);

@@ -172,12 +172,26 @@ test('asset replacement moves the manifest entry to the new number and keeps old
   const media = await handleApi(authedRequest(`https://x/api/workspace/audio?ref=${created.ref}&n=1`), target);
   assert.equal(media.status, 200);
   assert.equal(await media.text(), 'new');
+  for (const replacement of [{ n: 2, replace_n: 0 }, { n: 1, replace_n: 1 }]) {
+    const invalid = await handleApi(authedRequest('https://x/api/workspace/asset', { method: 'POST', body: { ref: created.ref, ...replacement, path: 'other.mp3', role: 'song', size: 3 } }), target);
+    assert.equal(invalid.status, 409);
+    assert.equal((await invalid.json()).error, 'invalid replacement');
+  }
   assert.equal((await handleApi(authedRequest('https://x/api/workspace/extract', { method: 'POST', body: { ref: created.ref } }), target)).status, 200);
   const manifest = JSON.parse(bucket.store.get(`web/${created.ref}/manifest.json`));
   assert.deepEqual(manifest.files.filter((file) => file.path !== 'manifest.toml'), [{ n: 1, path: 'audio/song.mp3', size: 3 }]);
   assert.equal(bucket.store.get(`web/${created.ref}/0`), 'old');
-  const invalid = await handleApi(authedRequest('https://x/api/workspace/asset', { method: 'POST', body: { ref: created.ref, n: 2, replace_n: 0, path: 'other.mp3', role: 'song', size: 3 } }), target);
-  assert.equal(invalid.status, 409);
+});
+
+test('extraction refuses an exhausted object index space before submitting a manifest', async () => {
+  const bucket = fakeBucket(); const target = env(bucket);
+  const created = await (await handleApi(authedRequest('https://x/api/workspace/create', { method: 'POST', body: { album: '编号边界' } }), target)).json();
+  for (let n = 0; n < 500; n++) await bucket.put(`web/${created.ref}/${n}`, 'x');
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/asset', { method: 'POST', body: { ref: created.ref, n: 499, path: 'song.mp3', role: 'song', size: 1 } }), target)).status, 200);
+  const response = await handleApi(authedRequest('https://x/api/workspace/extract', { method: 'POST', body: { ref: created.ref } }), target);
+  assert.equal(response.status, 400);
+  assert.equal(bucket.store.has(`web/${created.ref}/manifest.json`), false);
+  assert.equal(bucket.store.has(`web/${created.ref}/500`), false);
 });
 
 test('published word timings are submitted as an ELRC sidecar', async () => {

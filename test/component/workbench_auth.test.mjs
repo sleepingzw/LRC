@@ -11,9 +11,9 @@ const Workspace = { name: 'Workspace', template: '<main><slot name="account"/><s
 async function mountWorkbench(fetcher) { globalThis.fetch = fetcher; globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); const wrapper = mount(Workbench, { global: { stubs: { Workspace } } }); await flushPromises(); return wrapper; }
 
 describe('工作站会话界面', () => {
-  it('未登录时只显示用户名和密码登录入口', async () => {
+  it('未登录时显示简洁登录入口和邀请码注册入口', async () => {
     const wrapper = await mountWorkbench((url) => url === '/api/auth/setup' ? response({ needsBootstrap: false, githubConfigured: false }) : response({ error: 'unauthorized' }, 401));
-    expect(wrapper.text()).toContain('登录工作站'); expect(wrapper.text()).toContain('凭邀请码开号'); expect(wrapper.find('input[autocomplete="username"]').exists()).toBe(true); expect(wrapper.html()).not.toContain('/api/upload/verify'); wrapper.unmount();
+    expect(wrapper.text()).toContain('欢迎回来'); expect(wrapper.text()).toContain('使用邀请码注册'); expect(wrapper.find('input[autocomplete="username"]').exists()).toBe(true); expect(wrapper.html()).not.toContain('/api/upload/verify'); wrapper.unmount();
   });
   it('登录成功后挂载工作区，401 返回登录态', async () => {
     let logged = false; const wrapper = await mountWorkbench((url) => { if (url === '/api/auth/setup') return response({ needsBootstrap: false, githubConfigured: true }); if (url === '/api/auth/me') return logged ? response({ user: admin }) : response({ error: 'unauthorized' }, 401); if (url === '/api/auth/login') { logged = true; return response({ user: admin }); } return response({}); });
@@ -37,7 +37,32 @@ describe('工作站会话界面', () => {
     await wrapper.find('input[autocomplete="username"]').setValue('root');
     await wrapper.find('form').trigger('submit');await flushPromises();
     await wrapper.findAll('button').find(button=>button.text()==='退出').trigger('click');await flushPromises();
-    expect(wrapper.text()).toContain('登录工作站');expect(wrapper.text()).not.toContain('设置首个管理员');wrapper.unmount();
+    expect(wrapper.text()).toContain('欢迎回来');expect(wrapper.text()).not.toContain('设置首个管理员');wrapper.unmount();
+  });
+  it('邀请码注册校验用户名、密码确认，并清理切页时的密码', async () => {
+    const wrapper = await mountWorkbench((url) => url === '/api/auth/setup' ? response({ needsBootstrap: false, githubConfigured: false }) : response({ error: 'unauthorized' }, 401));
+    await wrapper.findAll('button').find((button) => button.text() === '使用邀请码注册').trigger('click');
+    expect(wrapper.text()).toContain('邀请码注册'); expect(wrapper.text()).toContain('邀请码请向管理员获取');
+    await wrapper.find('#invite-code').setValue('invite'); await wrapper.find('#register-name').setValue('UPPER'); await wrapper.find('#register-password').setValue('short'); await wrapper.find('#register-confirm-password').setValue('other');
+    await wrapper.find('form').trigger('submit'); await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain('用户名需为'); expect(wrapper.text()).toContain('密码需为 8–200 位。'); expect(wrapper.text()).toContain('两次输入的密码不一致。');
+    await wrapper.findAll('button').find((button) => button.text() === '返回登录').trigger('click');
+    await wrapper.findAll('button').find((button) => button.text() === '使用邀请码注册').trigger('click');
+    expect(wrapper.find('#register-password').element.value).toBe(''); expect(wrapper.find('#register-confirm-password').element.value).toBe(''); wrapper.unmount();
+  });
+  it('注册服务端邀请码错误显示中文提示，显示密码按钮切换输入类型', async () => {
+    const wrapper = await mountWorkbench((url) => url === '/api/auth/setup' ? response({ needsBootstrap: false, githubConfigured: false }) : url === '/api/auth/me' ? response({ error: 'unauthorized' }, 401) : response({ error: 'invite expired' }, 400));
+    await wrapper.findAll('button').find((button) => button.text() === '使用邀请码注册').trigger('click');
+    await wrapper.find('#invite-code').setValue('valid-code'); await wrapper.find('#register-name').setValue('writer'); await wrapper.find('#register-password').setValue('eightchars'); await wrapper.find('#register-confirm-password').setValue('eightchars');
+    expect(wrapper.find('#register-password').attributes('type')).toBe('password'); await wrapper.findAll('.wb-password-toggle')[0].trigger('click'); expect(wrapper.find('#register-password').attributes('type')).toBe('text');
+    await wrapper.find('form').trigger('submit'); await flushPromises(); expect(wrapper.text()).toContain('邀请码已过期。'); wrapper.unmount();
+  });
+  it('提交期间禁用重复提交和模式切换', async () => {
+    let resolveLogin; const login = new Promise((resolve) => { resolveLogin = resolve; }); let calls = 0;
+    const wrapper = await mountWorkbench((url) => { if (url === '/api/auth/setup') return response({ needsBootstrap: false, githubConfigured: false }); if (url === '/api/auth/me') return response({ error: 'unauthorized' }, 401); if (url === '/api/auth/login') { calls += 1; return login; } return response({}); });
+    await wrapper.find('#login-name').setValue('writer'); await wrapper.find('#login-password').setValue('eightchars'); await wrapper.find('form').trigger('submit'); await wrapper.vm.$nextTick();
+    expect(wrapper.find('button.primary').attributes('disabled')).toBeDefined(); expect(wrapper.findAll('button').find((button) => button.text() === '使用邀请码注册').attributes('disabled')).toBeDefined();
+    await wrapper.find('form').trigger('submit'); expect(calls).toBe(1); resolveLogin(response({ user: editor })); await flushPromises(); wrapper.unmount();
   });
 });
 

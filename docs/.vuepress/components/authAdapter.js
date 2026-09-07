@@ -1,4 +1,14 @@
 export function createAuthAdapter(request = fetch) {
+  const AUTH_ERRORS = {
+    'invalid credentials': '用户名或密码错误。',
+    'invalid invite': '邀请码无效。',
+    'invite already used': '邀请码已被使用。',
+    'invite expired': '邀请码已过期。',
+    'username taken': '该用户名已被使用。',
+    'bad name': '用户名格式不正确。',
+    'weak password': '密码需为 8–200 位。',
+    unauthorized: '登录信息无效，请重新登录。',
+  };
   const json = async (path, init = {}) => {
     const response = await request(path, {
       credentials: 'same-origin',
@@ -7,7 +17,8 @@ export function createAuthAdapter(request = fetch) {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const error = new Error(body.error || body.message || `HTTP ${response.status}`);
+      const detail = body.error || body.message;
+      const error = new Error(AUTH_ERRORS[detail] || detail || `请求失败（${response.status}）`);
       error.status = response.status;
       throw error;
     }

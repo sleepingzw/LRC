@@ -10,7 +10,7 @@ describe('组件挂载环境冒烟', () => {
     const wrapper = mount(Workbench);
     await flushPromises();
     expect(wrapper.find('input[type="password"]').exists()).toBe(true);
-    expect(wrapper.find('button').text()).toContain('登录');
+    expect(wrapper.find('button.primary').text()).toContain('登录');
     wrapper.unmount();
   });
 });

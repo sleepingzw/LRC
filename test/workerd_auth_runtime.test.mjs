@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const { Miniflare } = createRequire(new URL('../worker/package.json', import.meta.url))('miniflare');
 
-test('workerd executes the production PBKDF2 password path at 600k iterations', async () => {
+test('workerd executes the production PBKDF2 password path at 100k iterations', async () => {
   const mf = new Miniflare({ modules: true, scriptPath: new URL('./workerd_auth_worker.mjs', import.meta.url).pathname, modulesRules: [{ type: 'ESModule', include: ['**/*.js'] }], compatibilityDate: '2026-08-06' });
   try {
     const response = await mf.dispatchFetch('https://local.test/');
     assert.equal(response.status, 200);
     const result = await response.json();
     assert.equal(result.verified, true);
-    assert.equal(result.iterations, 600000);
+    assert.equal(result.iterations, 100000);
     assert.ok(result.elapsedMs > 0);
   } finally {
     await mf.dispose();

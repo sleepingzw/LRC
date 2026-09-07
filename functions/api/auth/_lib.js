@@ -41,7 +41,7 @@ export async function secretEquals(candidate, expected) {
 }
 
 // PBKDF2-HMAC-SHA256，迭代数入库，取值与实测耗时见 findings.md
-export const PBKDF2_ITERATIONS = 600_000;
+export const PBKDF2_ITERATIONS = 100_000;
 const SALT_BYTES = 16;
 export const TOKEN_BYTES = 32;
 export const INVITE_BYTES = 16;

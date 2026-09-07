@@ -196,6 +196,16 @@ export function explorerTree(draft, origin) {
     const resource = { ...base, kind: 'document', index };
     return { id: documentId(resource, 'text:document'), type: item.kind === 'folder' ? 'folder' : 'file', label: item.path, resource, view: 'text:document' };
   });
+  const flat = [...documentNodes, ...trackNodes];
+  for (const asset of draft.assets || []) flat.push({ id: documentId({ ...base, kind: 'asset', index: asset.n }, 'asset'), type: 'file', label: asset.path, resource: { ...base, kind: 'asset', index: asset.n }, view: 'assets' });
+  const roots = [];
+  const add = (nodes, node) => {
+    const parts = String(node.label).split('/').filter(Boolean); if (parts.length < 2) return nodes.push(node);
+    let level = nodes; let path = '';
+    for (const part of parts.slice(0, -1)) { path += `${part}/`; let folder = level.find(item => item.type === 'folder' && item.label === part); if (!folder) { folder = { id: `folder:${path}`, type: 'folder', label: part, children: [] }; level.push(folder); } level = folder.children; }
+    level.push({ ...node, label: parts.at(-1) });
+  };
+  for (const node of flat) add(roots, node);
   return [{
     id: documentId(albumResource, 'meta'),
     type: 'virtual',
@@ -205,8 +215,7 @@ export function explorerTree(draft, origin) {
     children: [
       { id: documentId(albumResource, 'text:json'), type: 'file', label: 'meta.json', resource: albumResource, view: 'text:json' },
       { id: documentId(albumResource, 'assets'), type: 'virtual', label: '素材', resource: albumResource, view: 'assets' },
-      ...documentNodes,
-      ...trackNodes,
+      ...roots,
     ],
   }];
 }

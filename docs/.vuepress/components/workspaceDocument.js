@@ -158,7 +158,7 @@ export function documentId(resource, view) {
 }
 
 export function viewsFor(resource) {
-  return resource.kind === 'track' ? ['timing', 'text:lrc', 'text:elrc'] : resource.kind === 'document' ? ['text:document'] : ['meta', 'text:json', 'assets'];
+  return resource.kind === 'track' ? ['timing', 'text:lrc', 'text:elrc'] : resource.kind === 'document' ? ['text:document'] : resource.kind === 'asset' ? ['asset'] : ['meta', 'text:json', 'assets'];
 }
 
 export function documentLanguage(path) {
@@ -203,7 +203,7 @@ export function explorerTree(draft, origin) {
     return { id: documentId(resource, 'text:document'), type: item.kind === 'folder' ? 'folder' : 'file', label: item.path, path: item.path, resource, view: 'text:document' };
   });
   const flat = [...documentNodes, ...trackNodes];
-  for (const asset of draft.assets || []) flat.push({ id: documentId({ ...base, kind: 'asset', index: asset.n }, 'asset'), type: 'file', label: asset.path, resource: { ...base, kind: 'asset', index: asset.n }, view: 'assets' });
+  for (const asset of draft.assets || []) flat.push({ id: documentId({ ...base, kind: 'asset', index: asset.n }, 'asset'), type: 'file', label: asset.path, resource: { ...base, kind: 'asset', index: asset.n }, view: 'asset' });
   const roots = [];
   const add = (nodes, node) => {
     const parts = String(node.label).split('/').filter(Boolean); if (parts.length < 2) return nodes.push(node);

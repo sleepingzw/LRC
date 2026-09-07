@@ -131,16 +131,17 @@ describe('文件工作区真实组件流', () => {
     await openFile(w, '.lrc'); expect(w.get('textarea').element.readOnly).toBe(true); expect(w.get('textarea').element.value).toBe(original);
     await openFile(w, '.elrc'); expect(w.get('textarea').element.readOnly).toBe(true); await button(w, '保存').trigger('click'); await flushPromises(); expect(saved(calls).tracks[0].lrc).toBe(original);
   });
-  it('左侧上传直接保存素材并在树中可打开，不再显示旧上传窗口', async () => {
+  it('左侧上传直接保存素材并在树中打开具体文件，不再显示旧上传窗口', async () => {
     const { w, calls, uploads } = await setup(draft([], { assets: [{ n: 7, path: 'old.png', role: 'photo', linkTo: ['SP'] }] }));
     const file = new File(['image'], 'new.png', { type: 'image/png' }); Object.defineProperty(file, 'webkitRelativePath', { value: 'folder/new.png' }); await importFile(w, file);
     expect(uploads[0].url).toContain('n=8'); expect(calls.find(call => call.path === '/api/workspace/asset').body).toMatchObject({ n: 8, path: 'folder/new.png' }); expect(saved(calls).assets.map(asset => asset.n)).toEqual([7, 8]); expect(w.find('.upload-dialog').exists()).toBe(false);
-    await openFile(w, 'new.png'); expect(w.find('.album-assets').exists()).toBe(true);
+    await openFile(w, 'new.png'); expect(w.findComponent({ name: 'WorkspaceAssetView' }).exists()).toBe(true);
   });
-  it('左侧上传失败保留资产队列，重试保存时复用已分配编号', async () => {
-    let failed = true; const { w, calls } = await setup(draft(), { '/api/workspace/asset': () => failed ? reply({ error: 'retry' }, 503) : reply({ ok: true }) });
-    await importFile(w, new File(['image'], 'retry.png', { type: 'image/png' })); expect(w.text()).toContain('保存失败'); failed = false; await openFile(w, '素材'); await button(w, '保存').trigger('click'); await flushPromises();
-    expect(calls.filter(call => call.path === '/api/workspace/asset').map(call => call.body.n)).toEqual([0, 0]); expect(saved(calls).assets).toHaveLength(1);
+  it('左侧分片上传失败后从素材总览重试，只重传失败片段并复用编号', async () => {
+    let failPart = true; const parts = []; let creates = 0;
+    const { w, calls } = await setup(draft(), { '/api/upload/multipart': ({ url }) => { const action = url.searchParams.get('action'); if (action === 'create') { creates++; return reply({ ok: true, uploadId: 'parts' }); } if (action === 'complete') return reply({ ok: true }); const n = Number(url.searchParams.get('partNumber')); parts.push(n); if (n === 2 && failPart) { failPart = false; return reply({ error: 'retry' }, 503); } return reply({ ok: true, partNumber: n, etag: `etag-${n}` }); } });
+    const file = new File(['tiny'], 'big.wav'); Object.defineProperty(file, 'size', { value: DIRECT_UPLOAD_LIMIT + 1 }); await importFile(w, file); expect(w.text()).toContain('保存失败'); expect(calls.some(call => call.path === '/api/workspace/save')).toBe(false);
+    await openFile(w, '素材'); await button(w, '保存').trigger('click'); await flushPromises(); expect(creates).toBe(1); expect(parts.filter(n => n === 1)).toHaveLength(1); expect(parts.filter(n => n === 2)).toHaveLength(2); expect(parts.at(-1)).toBe(Math.ceil((DIRECT_UPLOAD_LIMIT + 1) / MULTIPART_PART_SIZE)); expect(saved(calls).assets).toHaveLength(1);
   });
   it('新曲目音频先返回时旧请求无法覆盖且按曲目序号选择素材', async () => {
     let releaseFirst; const requests = []; const { w } = await setup(draft([track(1, '主歌'), track(2, '次歌')], { assets: [{ n: 3, path: 'one.wav', role: 'song', linkTo: [1] }, { n: 9, path: 'two.wav', role: 'song', linkTo: [2] }] }), {
@@ -181,8 +182,16 @@ describe('文件工作区真实组件流', () => {
     await button(w, '新建专辑').trigger('click'); await w.get('[aria-label="专辑名称"]').setValue('新专辑'); const input = w.get('.album-creation-card input[type=file]'); Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['x'], 'cover.png', { type: 'image/png' })] }); await input.trigger('change'); await button(w, '创建并上传').trigger('click'); await flushPromises();
     expect(w.get('[aria-label="专辑名称"]').element.value).toBe('新专辑'); expect(calls.filter(call => call.path === '/api/workspace/create')).toHaveLength(1); uploadFails = false; await button(w, '创建并上传').trigger('click'); await flushPromises(); expect(calls.filter(call => call.path === '/api/workspace/create')).toHaveLength(1);
   });
+  it('新专辑卡中的歌词文本可编辑，创建时上传修改后的原文', async () => {
+    const { w, uploads } = await setup(draft(), { '/api/workspace/create': ({ body }) => reply({ ref: 'created', draft: draft([], { album: body.album }) }) });
+    await button(w, '新建专辑').trigger('click'); await w.get('[aria-label="专辑名称"]').setValue('文本专辑');
+    const input = w.get('.album-creation-card input[type=file]'); const lyric = new File(['旧歌词'], 'song.elrc', { type: 'text/plain' }); Object.defineProperty(lyric, 'webkitRelativePath', { value: 'lyrics/song.elrc' }); Object.defineProperty(input.element, 'files', { configurable: true, value: [lyric] }); await input.trigger('change');
+    const assets = w.findComponent({ name: 'AlbumAssetsView' }); const pending = assets.props('pendingFiles')[0]; assets.vm.$emit('update-pending', [{ ...pending, raw: new File(['新歌词'], 'song.elrc', { type: 'text/plain' }), size: 9 }]); await flushPromises(); await button(w, '创建并上传').trigger('click'); await flushPromises();
+    expect(await uploads[0].file.text()).toBe('新歌词');
+  });
   it('目录内联新建普通文件与歌词映射，错误保留输入且文件在右侧打开', async () => {
     let reject = true; const { w, calls } = await setup(draft([], { documents: [{ kind: 'folder', path: '歌词' }] }), { '/api/workspace/document': ({ body }) => { if (reject) return reply({ error: 'exists' }, 409); if (/\.elrc$/i.test(body.path)) return reply({ track: { ...track(1, '星河'), title: '星河', lyric_stem: '歌词/星河' } }); return reply({ document: { kind: body.kind, path: body.path, text: '' } }); } });
+    const folder = w.findAll('.workspace-tree button').find(node => node.text().endsWith('歌词')); await folder.trigger('click'); await folder.trigger('click'); expect(w.findAll('[role=tab]')).toHaveLength(0);
     await w.get('[aria-label="在 歌词 新建文件"]').trigger('click'); await w.get('[aria-label="新建文件名称"]').setValue('notes.md'); await w.get('.workspace-tree-create').trigger('submit'); await flushPromises(); expect(w.get('[aria-label="新建文件名称"]').element.value).toBe('notes.md'); expect(w.get('[role=alert]').text()).toContain('exists');
     reject = false; await w.get('.workspace-tree-create').trigger('submit'); await flushPromises(); expect(w.get('[aria-label="编辑 歌词/notes.md"]').exists()).toBe(true); expect(calls.at(-1).body.path).toBe('歌词/notes.md');
     await w.get('[aria-label="在 歌词 新建文件"]').trigger('click'); await w.get('[aria-label="新建文件名称"]').setValue('星河.elrc'); await w.get('.workspace-tree-create').trigger('submit'); await flushPromises();

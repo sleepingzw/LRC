@@ -22,6 +22,7 @@
             <TrackTimingView v-else-if="selectedTrack && activeDocument.view === 'timing'" :key="selectedTrack._id" :track="selectedTrack" :audio-url="audioUrl" :theme="theme" :read-only="activeEntry.readOnly" @update="updateTrack" />
             <AlbumMetaView v-else-if="activeEntry && activeDocument.view === 'meta'" :editor="activeEntry.edit" :theme="theme" :read-only="activeEntry.readOnly" :cover-url="coverUrl" :page-url="pageUrl" @update="updateAlbum" @cover="updateCover" />
             <AlbumAssetsView v-else-if="activeEntry && activeDocument.view === 'assets'" :assets="activeEntry.edit.assets" :pending-files="activeEntry.pendingFiles" :tracks="activeEntry.edit.tracks" :uploading="uploading" :progress="uploadProgress" :read-only="activeEntry.readOnly" :theme="theme" :load-asset="loadAsset" @import="queueAssets" @update="updateAssets" @update-pending="updatePendingFiles" @replace="replaceAsset" />
+            <WorkspaceAssetView v-else-if="selectedAsset" ref="assetView" :asset="selectedAsset" :pending-file="selectedPendingAsset" :load-asset="loadAsset" :theme="theme" :read-only="activeEntry.readOnly" :busy="busy" @buffer="markDirty(activeEntry, activeDocument.resource)" @replace="replaceAsset" @update-pending="updatePendingAsset" />
             <section v-else-if="activeEntry && activeDocument.view === 'text:json'" class="workspace-json"><MonacoLrcEditor :model-value="jsonSource" language="json" :theme="theme" :read-only="activeEntry.readOnly" aria-label="专辑元数据 JSON 编辑器" @update:model-value="editJson" /><footer><button type="button" :disabled="activeEntry.readOnly" @click="applyJson()">应用 JSON</button><span :class="{ error: jsonError }" role="status">{{ jsonMessage }}</span></footer></section>
           </div>
         </section>
@@ -41,6 +42,7 @@ import TrackTextView from './TrackTextView.vue';
 import TrackTimingView from './TrackTimingView.vue';
 import AlbumMetaView from './AlbumMetaView.vue';
 import AlbumAssetsView from './AlbumAssetsView.vue';
+import WorkspaceAssetView from './WorkspaceAssetView.vue';
 import MonacoLrcEditor from './MonacoLrcEditor.vue';
 import { createWorkspaceAdapter } from './workspaceAdapter.js';
 import * as documentModel from './workspaceDocument.js';
@@ -52,6 +54,7 @@ const props = defineProps({ theme: { type: String, default: 'light' }, user: { t
 const emit = defineEmits(['unauthorized', 'account', 'users']);
 const entries = ref([]); const catalog = ref([]); const pending = ref([]); const documents = ref([]); const activeId = ref(''); const expanded = ref([]);
 const busy = ref(false); const uploading = ref(false); const uploadProgress = ref(''); const status = ref(''); const statusError = ref(false); const audioUrl = ref(''); const coverUrl = ref(''); const pageUrls = ref({});
+const assetView = ref(null);
 const jsonMessage = ref(''); const jsonError = ref(false); const creationFeedback = ref({ sequence: 0 }); const albumCreation = ref({ album: '', submissionType: 'album', pendingFiles: [], createdEntryKey: '' });
 let id = 0; let pollTimer; let refreshing = false; let disposed = false; let mediaAbort; let mediaVersion = 0; const transferAbort = new AbortController();
 const newId = () => `workspace-${++id}`;
@@ -60,6 +63,8 @@ const activeDocument = computed(() => documents.value.find(item => item.id === a
 const activeEntry = computed(() => entries.value.find(item => item.key === activeDocument.value?.entryKey));
 const selectedTrack = computed(() => activeDocument.value?.resource.kind === 'track' ? activeEntry.value?.edit.tracks[activeDocument.value.resource.index] : null);
 const selectedDocument = computed(() => activeDocument.value?.resource.kind === 'document' ? activeEntry.value?.edit.documents[activeDocument.value.resource.index] : null);
+const selectedAsset = computed(() => activeDocument.value?.resource.kind === 'asset' ? activeEntry.value?.edit.assets.find(item => item.n === activeDocument.value.resource.index) : null);
+const selectedPendingAsset = computed(() => selectedAsset.value ? activeEntry.value?.pendingFiles.find(item => item.replace?.n === selectedAsset.value.n) || null : null);
 const linkedTracks = computed(() => selectedTrack.value ? documentModel.linkedInstrumentalTracks(activeEntry.value.edit, selectedTrack.value) : []);
 const activeViews = computed(() => activeEntry.value ? viewsFor(activeDocument.value.resource) : []);
 const dirtyEntries = computed(() => entries.value.filter(entry => entry.revision !== entry.savedRevision));
@@ -81,7 +86,7 @@ function replaceEntry(next) {
 }
 function refreshDocumentTitles(entry) {
   const root = explorerTree(toDraft(entry.edit), entry)[0];
-  const nodes = [root, ...root.children, ...root.children.flatMap(node => node.children || [])];
+  const nodes = []; const collect = node => { nodes.push(node); for (const child of node.children || []) collect(child); }; collect(root);
   for (const doc of documents.value.filter(item => item.entryKey === entry.key)) {
     const node = nodes.find(node => node.id === doc.id); if (node) doc.title = node.label;
   }
@@ -89,9 +94,12 @@ function refreshDocumentTitles(entry) {
 function markDirty(entry = activeEntry.value, resource = activeDocument.value?.resource) {
   if (!entry || entry.readOnly) return;
   entry.revision += 1;
-  const key = resource?.kind === 'track' ? `track:${resource.index}` : resource?.kind === 'document' ? `document:${resource.index}` : 'album';
+  const key = resource?.kind === 'track' ? `track:${resource.index}` : resource?.kind === 'document' ? `document:${resource.index}` : resource?.kind === 'asset' ? `asset:${resource.index}` : 'album';
   if (!entry.dirtyResources.includes(key)) entry.dirtyResources.push(key);
-  for (const doc of documents.value.filter(item => item.entryKey === entry.key)) doc.dirty = doc.resource.kind === 'album' || entry.dirtyResources.includes(`track:${doc.resource.index}`) || entry.dirtyResources.includes(`document:${doc.resource.index}`);
+  for (const doc of documents.value.filter(item => item.entryKey === entry.key)) {
+    const resourceKey = doc.resource.kind === 'track' ? `track:${doc.resource.index}` : doc.resource.kind === 'document' ? `document:${doc.resource.index}` : doc.resource.kind === 'asset' ? `asset:${doc.resource.index}` : 'album';
+    doc.dirty = resourceKey === 'album' || entry.dirtyResources.includes(resourceKey);
+  }
 }
 function applyTrackBuffers(entry, track) {
   for (const format of Object.keys(track._sourceBuffers || {})) if (applySourceBuffer(track, format, newId, text => window.confirm(text))) updateTrack(track, entry);
@@ -99,6 +107,7 @@ function applyTrackBuffers(entry, track) {
 function flushCurrent() {
   try {
     if (!activeEntry.value) return true;
+    if (selectedAsset.value) assetView.value?.flush?.();
     if (activeDocument.value.view === 'text:json' && activeEntry.value.jsonBuffer !== null) return applyJson(activeEntry.value);
     if (selectedTrack.value) applyTrackBuffers(activeEntry.value, selectedTrack.value);
     return true;
@@ -113,7 +122,8 @@ function openNode(node, entryKey) {
   const targetId = documentId(node.resource, node.view);
   let doc = documents.value.find(item => item.id === targetId);
   if (!doc) {
-    doc = { id: targetId, resource: node.resource, fileView: node.view, view: initialView, title: node.label, entryKey: entry.key, dirty: entry.revision !== entry.savedRevision && (node.resource.kind === 'album' || entry.dirtyResources.includes(`track:${node.resource.index}`) || entry.dirtyResources.includes(`document:${node.resource.index}`)) };
+    const resourceKey = node.resource.kind === 'track' ? `track:${node.resource.index}` : node.resource.kind === 'document' ? `document:${node.resource.index}` : node.resource.kind === 'asset' ? `asset:${node.resource.index}` : 'album';
+    doc = { id: targetId, resource: node.resource, fileView: node.view, view: initialView, title: node.label, entryKey: entry.key, dirty: entry.revision !== entry.savedRevision && (resourceKey === 'album' || entry.dirtyResources.includes(resourceKey)) };
     documents.value.push(doc);
   }
   activeId.value = doc.id;
@@ -142,15 +152,20 @@ function updateAlbum() { markDirty(); refreshDocumentTitles(activeEntry.value); 
 function updateDocument(text) { if (!selectedDocument.value || activeEntry.value.readOnly) return; selectedDocument.value.text = text; markDirty(activeEntry.value, activeDocument.value.resource); }
 function updateAssets(assets, entry = activeEntry.value) { if (!entry || entry.readOnly) return; entry.edit.assets = assets; markDirty(entry, { kind: 'album' }); }
 function updatePendingFiles(files, entry = activeEntry.value) { if (!entry || entry.readOnly) return; entry.pendingFiles = files.map(item => { const old = entry.pendingFiles.find(value => value.id === item.id); return old && old.raw !== item.raw ? { ...item, transfer: undefined, uploaded: false } : item; }); markDirty(entry, { kind: 'album' }); }
+function updatePendingAsset(item, entry = activeEntry.value) {
+  if (!entry || entry.readOnly || !item?.id) return;
+  updatePendingFiles(entry.pendingFiles.map(value => value.id === item.id ? item : value), entry);
+  if (item.replace) markDirty(entry, { kind: 'asset', index: item.replace.n });
+}
 function replaceAsset(payload, entry = activeEntry.value) {
   if (!entry || entry.readOnly) return;
   const previous = entry.pendingFiles.findIndex(item => item.replace?.n === payload.asset.n);
   const replacement = { id: newId(), raw: payload.file, name: payload.path, path: payload.path, role: payload.asset.role, linkTo: [...(payload.asset.linkTo || [])], replace: payload.asset };
   if (previous >= 0) entry.pendingFiles.splice(previous, 1, replacement); else entry.pendingFiles.push(replacement);
-  markDirty(entry, { kind: 'album' });
+  markDirty(entry, { kind: 'asset', index: payload.asset.n });
 }
 function toggle(key) { expanded.value = expanded.value.includes(key) ? expanded.value.filter(item => item !== key) : [...expanded.value, key]; }
-function viewLabel(view) { return ({ timing: '调轴', 'text:lrc': 'LRC 源码', 'text:elrc': 'ELRC 源码', meta: '元数据', 'text:json': 'JSON 源码', assets: '素材', account: '账户设置', users: '用户管理' })[view] || view; }
+function viewLabel(view) { return ({ timing: '聚合调轴', 'text:lrc': 'LRC 源码', 'text:elrc': 'ELRC 源码', 'text:document': '文本编辑', meta: '元数据', 'text:json': 'JSON 源码', assets: '素材总览', asset: '素材文件', 'new-album': '新建专辑', account: '账户设置', users: '用户管理' })[view] || view; }
 function editJson(text) { if (!activeEntry.value || activeEntry.value.readOnly) return; activeEntry.value.jsonBuffer = text; jsonMessage.value = ''; markDirty(); }
 function applyJson(entry = activeEntry.value) {
   if (!entry || entry.readOnly || entry.jsonBuffer === null) return true;
@@ -240,12 +255,12 @@ async function retryPending(item) { try { await api.retry(item.ref); await refre
 function removeEntry(entry) { entries.value = entries.value.filter(item => item.key !== entry.key); documents.value = documents.value.filter(doc => doc.entryKey !== entry.key); if (!activeDocument.value) activeId.value = documents.value.at(-1)?.id || ''; }
 async function discardPending(item) { if (!window.confirm(`丢弃「${item.album}」的审核草稿及未保存修改？`)) return; try { await api.discard(item.ref, item.storage_album); for (const entry of entries.value.filter(entry => entry.origin === 'ingest' && entry.ref === item.ref && entry.storageAlbum === item.storage_album)) removeEntry(entry); await refresh(); } catch (error) { setStatus(`丢弃失败：${error.message}`, true); } }
 async function discardDraft(key) { const entry = entries.value.find(item => item.key === key); if (!entry || busy.value || !window.confirm(`丢弃「${entry.edit.album}」的草稿及未保存修改？`)) return; try { if (entry.origin === 'ingest') await api.discard(entry.ref, entry.storageAlbum); else await api.workspaceDiscard(entry.ref); removeEntry(entry); await refresh(); } catch (error) { setStatus(`丢弃失败：${error.message}`, true); } }
-async function openUpload({ key, files }) { const entry = entries.value.find(item => item.key === key) || activeEntry.value; if (!entry || entry.readOnly || busy.value) return; queueAssets(files, entry); if (entry.pendingFiles.length) await saveActive(entry); }
-function queueAssets(files, entry = activeEntry.value) {
+async function openUpload({ key, files, parentPath = '' }) { const entry = entries.value.find(item => item.key === key) || activeEntry.value; if (!entry || entry.readOnly || busy.value) return; queueAssets(files, entry, parentPath); if (entry.pendingFiles.length) await saveActive(entry); }
+function queueAssets(files, entry = activeEntry.value, parentPath = '') {
   if (!entry || entry.readOnly || uploading.value) return;
   const known = new Set([...entry.edit.assets.map(item => item.path), ...entry.pendingFiles.map(item => item.path || item.name)].map(name => String(name).toLowerCase()));
   for (const raw of Array.from(files || [])) {
-    const path = raw.webkitRelativePath || raw.name;
+    const path = documentPath(parentPath, raw.webkitRelativePath || raw.name);
     if (known.has(path.toLowerCase())) { setStatus(`已存在同名素材：${path}`, true); continue; }
     known.add(path.toLowerCase()); entry.pendingFiles.push({ id: newId(), raw, name: path, path, role: assetRole(path), linkTo: [] });
   }
@@ -254,6 +269,7 @@ function queueAssets(files, entry = activeEntry.value) {
 async function saveActive(requestedEntry) {
   const entry = requestedEntry?.edit ? requestedEntry : activeEntry.value;
   if (!entry || entry.readOnly || busy.value) return false;
+  if (entry === activeEntry.value && selectedAsset.value) assetView.value?.flush?.();
   try { if (!applyJson(entry)) return false; for (const track of entry.edit.tracks) applyTrackBuffers(entry, track); } catch (error) { setStatus(`保存失败：${error.message}`, true); return false; }
   busy.value = true;
   try {
@@ -284,7 +300,7 @@ async function uploadPending(entry) {
         item.uploaded = true;
       }
       const asset = { n: item.transfer.n, path: item.path || item.name, role: item.role, size: item.raw.size, linkTo: [...(item.linkTo || [])] };
-      if (entry.origin === 'workspace') await api.asset(entry.ref, asset);
+      if (entry.origin === 'workspace') await api.asset(entry.ref, item.replace ? { ...asset, replace_n: item.replace.n } : asset);
       const oldIndex = item.replace ? entry.edit.assets.findIndex(value => value.n === item.replace.n) : entry.edit.assets.findIndex(value => value.n === asset.n);
       if (oldIndex >= 0) entry.edit.assets.splice(oldIndex, 1, asset); else entry.edit.assets.push(asset);
       if (asset.role === 'cover') { entry.edit.coverExt = (asset.path.match(/\.[a-z0-9]+$/i) || ['.png'])[0].toLowerCase(); entry.edit.coverRemoved = false; }

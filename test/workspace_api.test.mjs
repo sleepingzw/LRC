@@ -98,6 +98,40 @@ test('workspace documents and folders persist through save and draft refresh', a
   assert.equal(duplicate.status, 409);
 });
 
+test('document API creates canonical lyric tracks and enforces parent/path conflicts', async () => {
+  const bucket = fakeBucket(); const target = env(bucket);
+  const created = await (await handleApi(authedRequest('https://x/api/workspace/create', { method: 'POST', body: { album: '路径校验' } }), target)).json();
+  const missingParent = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'lyrics/star.lrc' } }), target);
+  assert.equal(missingParent.status, 409);
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'folder', path: 'lyrics' } }), target)).status, 200);
+  const lyric = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'lyrics/star.lrc' } }), target);
+  assert.equal(lyric.status, 200);
+  assert.deepEqual((await lyric.json()).track, { order: 1, title: 'star', lyric_stem: 'lyrics/star', lrc: '', klrc: '', timing_locked: false, edited: true });
+  const paired = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'lyrics/STAR.elrc' } }), target);
+  assert.equal(paired.status, 409);
+  const reserved = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'lyrics/meta.json' } }), target);
+  assert.equal(reserved.status, 400);
+});
+
+test('document files are materialized during extraction and saved drafts cannot bypass conflicts', async () => {
+  const bucket = fakeBucket(); const target = env(bucket);
+  const created = await (await handleApi(authedRequest('https://x/api/workspace/create', { method: 'POST', body: { album: '文档提取' } }), target)).json();
+  await bucket.put(`web/${created.ref}/0`, 'image');
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/asset', { method: 'POST', body: { ref: created.ref, n: 0, path: 'source/images/cover.png', role: 'photo', size: 5 } }), target)).status, 200);
+  const document = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'source/readme.md' } }), target);
+  assert.equal(document.status, 200);
+  const draft = JSON.parse(bucket.store.get(`workspace/${created.ref}/draft.json`));
+  draft.documents[0].text = '# saved document';
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/save', { method: 'POST', body: { ref: created.ref, draft } }), target)).status, 200);
+  const bypass = { ...draft, documents: [...draft.documents, { kind: 'file', path: 'source/readme.md/child.txt', text: 'bad' }] };
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/save', { method: 'POST', body: { ref: created.ref, draft: bypass } }), target)).status, 400);
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/extract', { method: 'POST', body: { ref: created.ref } }), target)).status, 200);
+  const manifest = JSON.parse(bucket.store.get(`web/${created.ref}/manifest.json`));
+  const savedFile = manifest.files.find((file) => file.path === 'source/readme.md');
+  assert.ok(savedFile);
+  assert.equal(bucket.store.get(`web/${created.ref}/${savedFile.n}`), '# saved document');
+});
+
 test('published word timings are submitted as an ELRC sidecar', async () => {
   const bucket = fakeBucket(); const target = env(bucket);
   const opened = await (await handleApi(authedRequest('https://x/api/workspace/open', { method: 'POST', body: { slug: 'demo_album' } }), target)).json();

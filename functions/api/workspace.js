@@ -13,6 +13,8 @@ const MAX_ASSETS = MAX_FILES;
 const MAX_ASSET_LINKS = 20;
 const ASSET_ROLES = new Set(['song', 'photo', 'text', 'staff', 'cover', 'etc']);
 const DOCUMENT_KINDS = new Set(['file', 'folder']);
+const DOCUMENT_EXTENSIONS = /\.(?:lrc|elrc|txt|md|json)$/i;
+const RESERVED_NAMES = new Set(['meta.json', 'manifest.toml', 'manifest.json']);
 const REF_RE = /^[0-9a-f]{32}$/;
 
 function cleanRef(value) { return typeof value === 'string' && REF_RE.test(value) ? value : null; }
@@ -81,17 +83,106 @@ function validAssetLink(item) {
 function validAsset(asset) {
   return !!asset && typeof asset === 'object' && !Array.isArray(asset)
     && Number.isInteger(asset.n) && asset.n >= 0 && asset.n < MAX_FILES
-    && typeof asset.path === 'string' && asset.path.length > 0 && asset.path.length <= 200
+    && typeof asset.path === 'string' && cleanRelPath(asset.path) === asset.path && asset.path.length <= 200
+    && !isReservedPath(asset.path)
     && ASSET_ROLES.has(asset.role)
     && Number.isInteger(asset.size) && asset.size > 0
     && Array.isArray(asset.linkTo) && asset.linkTo.length <= MAX_ASSET_LINKS && asset.linkTo.every(validAssetLink);
+}
+
+function isReservedPath(path) {
+  return RESERVED_NAMES.has(String(path).split('/').at(-1)?.toLowerCase());
+}
+
+function pathKey(path) {
+  const clean = cleanRelPath(path);
+  return clean ? clean.toLocaleLowerCase() : null;
+}
+
+function parentPaths(path) {
+  const parts = path.split('/');
+  return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'));
+}
+
+function pathIsWithin(parent, path) {
+  return path === parent || path.startsWith(`${parent}/`);
+}
+
+function validDraftPaths(draft) {
+  const documents = Array.isArray(draft.documents) ? draft.documents : [];
+  const assets = Array.isArray(draft.assets) ? draft.assets : [];
+  const entries = [];
+  const documentFolders = new Set();
+  const implicitDirectories = new Set();
+  const seen = new Set();
+
+  for (const asset of assets) {
+    const key = pathKey(asset.path);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    entries.push({ key, kind: 'file' });
+    const parts = key.split('/');
+    for (let i = 1; i < parts.length; i++) implicitDirectories.add(parts.slice(0, i).join('/'));
+  }
+
+  for (const item of documents) {
+    const key = pathKey(item.path);
+    if (!key || isReservedPath(item.path) || seen.has(key)) return false;
+    seen.add(key);
+    const kind = item.kind === 'folder' ? 'folder' : 'file';
+    entries.push({ key, kind });
+    if (kind === 'folder') documentFolders.add(key);
+  }
+
+  for (const track of draft.tracks) {
+    if (track.lyric_stem === undefined) continue;
+    const stem = pathKey(track.lyric_stem);
+    if (!stem || isReservedPath(`${stem}.lrc`) || isReservedPath(`${stem}.elrc`)) return false;
+    for (const parent of parentPaths(stem)) {
+      if (!documentFolders.has(parent) && !implicitDirectories.has(parent)) return false;
+    }
+    for (const ext of ['.lrc', '.elrc']) {
+      const key = `${stem}${ext}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      entries.push({ key, kind: 'file' });
+    }
+  }
+
+  for (const item of documents) {
+    for (const parent of parentPaths(pathKey(item.path))) {
+      if (!documentFolders.has(parent) && !implicitDirectories.has(parent)) return false;
+    }
+  }
+
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      const a = entries[i]; const b = entries[j];
+      if (a.key === b.key || (pathIsWithin(a.key, b.key) && a.kind === 'file') || (pathIsWithin(b.key, a.key) && b.kind === 'file')) return false;
+    }
+  }
+  return true;
+}
+
+function parentDirectoriesExist(draft, path) {
+  const folders = new Set((draft.documents || []).filter((item) => item.kind === 'folder').map((item) => pathKey(item.path)));
+  const implicit = new Set();
+  for (const asset of draft.assets || []) {
+    const parts = pathKey(asset.path)?.split('/') || [];
+    for (let i = 1; i < parts.length; i++) implicit.add(parts.slice(0, i).join('/'));
+  }
+  for (const track of draft.tracks || []) {
+    const parts = pathKey(track.lyric_stem)?.split('/') || [];
+    for (let i = 1; i < parts.length; i++) implicit.add(parts.slice(0, i).join('/'));
+  }
+  return parentPaths(pathKey(path)).every((parent) => folders.has(parent) || implicit.has(parent));
 }
 
 function validDraft(draft) {
   if (!draft || typeof draft !== 'object' || Array.isArray(draft) || !cleanAlbum(draft.album)) return false;
   if (draft.submission_type !== undefined && !['album', 'single'].includes(draft.submission_type)) return false;
   if (!Array.isArray(draft.tracks) || draft.tracks.length > MAX_FILES) return false;
-  if (draft.documents !== undefined && (!Array.isArray(draft.documents) || draft.documents.length > MAX_FILES || !draft.documents.every((item) => item && DOCUMENT_KINDS.has(item.kind) && typeof item.path === 'string' && !!cleanRelPath(item.path) && (item.kind === 'folder' || typeof item.text === 'string') && new TextEncoder().encode(item.text || '').byteLength <= MAX_TRACK_BYTES))) return false;
+  if (draft.documents !== undefined && (!Array.isArray(draft.documents) || draft.documents.length > MAX_FILES || !draft.documents.every((item) => item && DOCUMENT_KINDS.has(item.kind) && typeof item.path === 'string' && item.path.length <= 200 && cleanRelPath(item.path) === item.path && !isReservedPath(item.path) && (item.kind === 'folder' || (DOCUMENT_EXTENSIONS.test(item.path) && typeof item.text === 'string')) && new TextEncoder().encode(item.text || '').byteLength <= MAX_TRACK_BYTES))) return false;
   if (draft.assets !== undefined) {
     if (!Array.isArray(draft.assets) || draft.assets.length > MAX_ASSETS || !draft.assets.every(validAsset)) return false;
     const seenAssetNumbers = new Set();
@@ -106,8 +197,10 @@ function validDraft(draft) {
   } catch { return false; }
   return draft.tracks.every((track) => track && typeof track === 'object'
     && typeof track.title === 'string' && track.title.length <= 200
+    && (track.lyric_stem === undefined || (typeof track.lyric_stem === 'string' && track.lyric_stem.length <= 200 && cleanRelPath(track.lyric_stem) === track.lyric_stem && !isReservedPath(`${track.lyric_stem}.lrc`)))
     && typeof (track.lrc || '') === 'string' && new TextEncoder().encode(track.lrc || '').byteLength <= MAX_TRACK_BYTES
-    && typeof (track.klrc || '') === 'string' && new TextEncoder().encode(track.klrc || '').byteLength <= MAX_TRACK_BYTES);
+    && typeof (track.klrc || '') === 'string' && new TextEncoder().encode(track.klrc || '').byteLength <= MAX_TRACK_BYTES)
+    && validDraftPaths(draft);
 }
 
 async function newRef(env) {
@@ -133,6 +226,13 @@ function emptyDraft(album, submissionType = 'album') {
 }
 
 function workspaceLyricsStem(track, order, occupied, assets) {
+  if (track.lyric_stem !== undefined) {
+    const stem = cleanRelPath(track.lyric_stem);
+    if (!stem || ['.lrc', '.elrc'].some((ext) => occupied.has(`${stem}${ext}`.toLowerCase()))) return null;
+    occupied.add(`${stem}.lrc`.toLowerCase());
+    occupied.add(`${stem}.elrc`.toLowerCase());
+    return stem;
+  }
   const audio = trackAudio(track, order - 1, assets);
   const raw = String(audio?.path || track.title || '').normalize('NFC').replace(/\.[^./]+$/, '');
   const base = audio ? raw : `workspace/${String(order).padStart(3, '0')} ${raw.replace(/[^\p{L}\p{N} ._()-]/gu, '_').trim() || `track-${order}`}`.slice(0, 180);
@@ -233,14 +333,30 @@ export async function onDocumentPost({ request, env }) {
   const body = await request.json().catch(() => null);
   const ref = cleanRef(body?.ref); const kind = body?.kind;
   const path = typeof body?.path === 'string' ? body.path.normalize('NFC').trim() : '';
-  if (!ref || !DOCUMENT_KINDS.has(kind) || !cleanRelPath(path) || (kind === 'file' && !/\.(?:lrc|elrc|txt|json)$/i.test(path))) return json({ error: 'bad document' }, 400);
+  const cleanPath = cleanRelPath(path);
+  const lyricMatch = kind === 'file' && cleanPath?.match(/^(.*)\.(lrc|elrc)$/i);
+  if (!ref || !DOCUMENT_KINDS.has(kind) || cleanPath !== path || isReservedPath(path)
+    || (kind === 'file' && (!DOCUMENT_EXTENSIONS.test(path) || path.length > 200))) return json({ error: 'bad document' }, 400);
   const current = await writableWorkspace(env, ref); if (!current) return json({ error: 'workspace submitted' }, 409);
   const draft = await readJson(env, `${ROOT}/${ref}/draft.json`); if (!validDraft(draft)) return json({ error: 'not found' }, 404);
+  if (!parentDirectoriesExist(draft, lyricMatch ? lyricMatch[1] : path)) return json({ error: 'parent folder is required' }, 409);
+  if (lyricMatch) {
+    const lyric_stem = lyricMatch[1];
+    const title = lyric_stem.split('/').at(-1);
+    if (!title || draft.tracks.length >= MAX_FILES) return json({ error: 'file exists or limit reached' }, 409);
+    const track = { order: draft.tracks.length + 1, title, lyric_stem, lrc: '', klrc: '', timing_locked: false, edited: true };
+    const candidate = { ...draft, tracks: [...draft.tracks, track] };
+    if (!validDraft(candidate)) return json({ error: 'file exists or limit reached' }, 409);
+    const status = current;
+    await Promise.all([writeJson(env, `${ROOT}/${ref}/draft.json`, candidate), writeJson(env, `${ROOT}/${ref}/status.json`, { ...status, updated: nowStamp(), source: candidate.source?.kind || 'new', updated_by: auth.user.github || auth.user.name })]);
+    return json({ ok: true, ref, track });
+  }
   const documents = Array.isArray(draft.documents) ? draft.documents : [];
-  if (documents.length >= MAX_FILES || documents.some((item) => item.path.toLowerCase() === path.toLowerCase())) return json({ error: 'file exists or limit reached' }, 409);
+  if (documents.length >= MAX_FILES) return json({ error: 'file exists or limit reached' }, 409);
   const document = { kind, path, ...(kind === 'file' ? { text: '' } : {}) };
-  draft.documents = [...documents, document];
-  await Promise.all([writeJson(env, `${ROOT}/${ref}/draft.json`, draft), writeJson(env, `${ROOT}/${ref}/status.json`, { ...current, updated: nowStamp(), updated_by: auth.user.github || auth.user.name })]);
+  const candidate = { ...draft, documents: [...documents, document] };
+  if (!validDraft(candidate)) return json({ error: 'file exists or limit reached' }, 409);
+  await Promise.all([writeJson(env, `${ROOT}/${ref}/draft.json`, candidate), writeJson(env, `${ROOT}/${ref}/status.json`, { ...current, updated: nowStamp(), source: candidate.source?.kind || 'new', updated_by: auth.user.github || auth.user.name })]);
   return json({ ok: true, ref, document });
 }
 
@@ -324,11 +440,12 @@ export async function onExtractPost({ request, env }) {
   const draft = ref && await readJson(env, `${ROOT}/${ref}/draft.json`);
   const priorStatus = ref && await readJson(env, `${ROOT}/${ref}/status.json`) || {};
   const assets = Array.isArray(draft?.assets) ? draft.assets : [];
-  if (!ref || !validDraft(draft) || (!assets.length && !draft.tracks.length) || assets.length > MAX_FILES) return json({ error: 'bad request' }, 400);
+  const documentFiles = Array.isArray(draft?.documents) ? draft.documents.filter((item) => item.kind === 'file') : [];
+  if (!ref || !validDraft(draft) || (!assets.length && !draft.tracks.length && !documentFiles.length) || assets.length > MAX_FILES) return json({ error: 'bad request' }, 400);
   const hasText = (track) => Array.isArray(track.lines) ? track.lines.some((line) => typeof line === 'string' && line.trim()) : typeof track.lyrics === 'string' && !!track.lyrics.trim();
   const plannedLrc = draft.tracks.reduce((n, track) => n + (track.lrc || track.klrc || hasText(track) ? 1 : 0) + (track.klrc ? 1 : 0), 0);
-  const replacedStems = new Set(draft.tracks.filter((track) => track.lrc || track.klrc || hasText(track)).flatMap((track) => [track.title, track.audio, track.file].filter(Boolean).map((name) => String(name).split('/').at(-1).replace(/\.(?:lrc|elrc|txt|wav|mp3|flac|m4a|ogg|opus)$/i, '').toLowerCase())));
-  if (assets.length + plannedLrc + 1 > MAX_FILES) return json({ error: 'too many files' }, 400);
+  const replacedStems = new Set(draft.tracks.filter((track) => track.lrc || track.klrc || hasText(track)).flatMap((track) => [track.lyric_stem, track.title, track.audio, track.file].filter(Boolean).map((name) => String(name).split('/').at(-1).replace(/\.(?:lrc|elrc|txt|wav|mp3|flac|m4a|ogg|opus)$/i, '').toLowerCase())));
+  if (assets.length + documentFiles.length + plannedLrc + 1 > MAX_FILES) return json({ error: 'too many files' }, 400);
   if (await env.UPLOAD_BUCKET.head(`web/${ref}/manifest.json`)) {
     if (!priorStatus.job_started) {
       const retried = await callWorker(env, '/ingest', { ref });
@@ -350,7 +467,20 @@ export async function onExtractPost({ request, env }) {
     if (!object || object.size !== size) return json({ error: 'missing upload', n }, 409);
     seenPaths.add(path.toLowerCase()); seenNumbers.add(n); manifestFiles.push({ path, n, size });
   }
-  const occupiedPaths = new Set([...seenPaths].map((path) => path.toLocaleLowerCase()));
+  const occupiedPaths = new Set([...seenPaths, ...documentFiles.map((document) => document.path)].map((path) => path.toLocaleLowerCase()));
+  const documentFilesToWrite = [];
+  for (const document of documentFiles) {
+    let n = 0;
+    while (seenNumbers.has(n) && n < MAX_FILES) n += 1;
+    if (n >= MAX_FILES) return json({ error: 'too many files' }, 400);
+    const content = String(document.text);
+    const size = new TextEncoder().encode(content).byteLength;
+    seenNumbers.add(n);
+    documentFilesToWrite.push({ n, path: document.path, size, content });
+  }
+  await Promise.all(documentFilesToWrite.map((file) => env.UPLOAD_BUCKET.put(`web/${ref}/${file.n}`, file.content,
+    { httpMetadata: { contentType: 'text/plain; charset=utf-8' } })));
+  manifestFiles.push(...documentFilesToWrite.map(({ n, path, size }) => ({ n, path, size })));
   const lrcFiles = [];
   for (const [index, track] of draft.tracks.entries()) {
     if (!track.lrc && !track.klrc && !hasText(track)) continue;

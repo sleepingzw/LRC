@@ -77,6 +77,12 @@ describe('文件工作区真实组件流', () => {
     expect(w.get('textarea').element).toBe(editor);
     expect(w.get('.workspace-sync input').element.checked).toBe(true);
   });
+  it('调轴逐字微调通过更新事件联动已选 INST 的 LRC 与 ELRC', async () => {
+    const main = track(1, '主歌'); const inst = track(2, '主歌 (INST)', '旧词', { inst: true, output_name: '伴奏输出', final_name: '最终伴奏' });
+    const { w, calls } = await setup(draft([main, inst])); await openFile(w, '01 主歌.elrc'); await view(w, 'timing'); await w.get('.workspace-sync input').setValue(true);
+    await w.get('[aria-label="调整 好 的句内偏移"]').trigger('keydown', { key: 'ArrowRight' }); await flushPromises(); await button(w, '保存').trigger('click'); await flushPromises();
+    expect(saved(calls).tracks[0].klrc).toContain('<00:01.310>好'); expect(saved(calls).tracks[1].lrc).toContain('[00:01.000]你好'); expect(saved(calls).tracks[1].klrc).toContain('<00:01.310>好');
+  });
   it('真实对象形状的已提交status将稿件设为只读', async () => {
     const {w,calls}=await setup(draft(),{'/api/workspace/draft':()=>reply({ref:'session',draft:draft(),status:{submitted:true,job_started:true,job:'queued'}})});
     await openFile(w,'.elrc');

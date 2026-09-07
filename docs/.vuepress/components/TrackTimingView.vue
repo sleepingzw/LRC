@@ -235,7 +235,7 @@ function finishRowTimeEdit(t, row) {
   updateActiveIndices(t, playheadMs(t));
   commitHistory(t);
 }
-function nudgeWordTime(t, row, index, event) { if (!['ArrowLeft', 'ArrowRight'].includes(event.key) || t.authoritativeLrc) return; event.preventDefault(); setWordTime(t, row, index, Number(row.words[index].time) + (event.key === 'ArrowLeft' ? -10 : 10)); }
+function nudgeWordTime(t, row, index, event) { if (!['ArrowLeft', 'ArrowRight'].includes(event.key) || readOnly || trackOwner(t).authoritativeLrc) return; event.preventDefault(); setWordTime(t, row, index, Number(row.words[index].time) + (event.key === 'ArrowLeft' ? -10 : 10)); }
 function closeTimelineMenu() { timelineMenu.value = null; }
 function openTimelineMenu(t, row, wordIndex, charIndex, event) { if (readOnly || trackOwner(t).authoritativeLrc) return; const x = Math.max(8, Math.min(window.innerWidth - 240, Number(event.clientX) || 8)); const y = Math.max(8, Math.min(window.innerHeight - 120, Number(event.clientY) || 8)); timelineMenu.value = { t, row, rowId: row._id, wordIndex, charIndex, rowIndex: t.rows.findIndex((item) => item._id === row._id), x, y }; nextTick(() => document.querySelector('.eb-timeline-menu [role="menuitem"]:not([disabled])')?.focus()); }
 function openTimelineMenuFromKey(t, row, wordIndex, charIndex, event) { if (!(event.shiftKey && event.key === 'F10') && event.key !== 'ContextMenu') return; event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); openTimelineMenu(t, row, wordIndex, charIndex, { clientX: rect.left, clientY: rect.bottom }); }
@@ -350,7 +350,7 @@ function clearTimeDrag() {
   if (state.node.hasPointerCapture(state.pointerId)) state.node.releasePointerCapture(state.pointerId);
 }
 function startTimeDrag(t, row, index, event) {
-  if (t.authoritativeLrc || event.button !== 0) return;
+  if (readOnly || trackOwner(t).authoritativeLrc || event.button !== 0) return;
   event.preventDefault(); clearTimeDrag();
   const indices = selectTimelineTokens(t, row, index, event);
   if (event.metaKey || event.ctrlKey || event.shiftKey || !indices.length) return;
@@ -375,7 +375,7 @@ function finishTimeDrag(event) {
   if (!dragState || (event?.pointerId != null && event.pointerId !== dragState.pointerId)) return;
   if (event?.clientX != null) dragState.x = event.clientX;
   const state = dragState;
-  if (!allTracks().includes(trackOwner(state.t)) || !state.t.rows.includes(state.row)) return clearTimeDrag();
+  if (readOnly || trackOwner(state.t).authoritativeLrc || !allTracks().includes(trackOwner(state.t)) || !state.t.rows.includes(state.row)) return clearTimeDrag();
   const offset = selectionDragOffset(state);
   for (const item of state.items) state.row.words[item.index].time = item.startTime + offset;
   updateActiveIndices(state.t, playheadMs(state.t)); lockTiming(state.t); commitHistory(state.t); clearTimeDrag();

@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils';
 import { expect, it, vi } from 'vitest';
 import TrackTimingView from '../../docs/.vuepress/components/TrackTimingView.vue';
-import { toEdit } from '../../docs/.vuepress/components/workspaceDocument.js';
+import { toDraft, toEdit } from '../../docs/.vuepress/components/workspaceDocument.js';
 
 function track() {
   return toEdit('album', { album: 'album', tracks: [{ order: 1, title: '轨道', lrc: '[00:01.000]你好\n', klrc: '[00:01.000]<00:01.000>你<00:01.300>好\n', lines: ['你好'] }] }, (() => { let id = 0; return () => ++id; })()).tracks[0];
@@ -47,4 +47,17 @@ it('只读任务禁用歌词修改与元数据写入，仍允许试听', () => {
   expect(wrapper.get('[aria-label="调整 好 的句内偏移"]').element.disabled).toBe(true);
   expect(wrapper.findAll('button').find(button=>button.text()==='播放').element.disabled).toBe(false);
   wrapper.unmount();
+});
+
+it('逐字键盘微调发出更新并序列化为 LRC 与 ELRC', async () => {
+  const editor = toEdit('album', { album: 'album', tracks: [{ order: 1, title: '轨道', lrc: '[00:01.000]你好\n', klrc: '[00:01.000]<00:01.000>你<00:01.300>好\n', lines: ['你好'] }] }, (() => { let id = 0; return () => ++id; })());
+  const value = editor.tracks[0]; const wrapper = mount(TrackTimingView, { props: { track: value } });
+  await wrapper.get('[aria-label="调整 好 的句内偏移"]').trigger('keydown', { key: 'ArrowRight' });
+  expect(wrapper.emitted('update').at(-1)[0]).toMatchObject({ _id: value._id }); const saved = toDraft(editor).tracks[0]; expect(saved.lrc).toContain('[00:01.000]你好'); expect(saved.klrc).toContain('<00:01.310>好'); wrapper.unmount();
+});
+
+it('只读时合成键盘事件不能改变逐字时间或发出更新', async () => {
+  const value = track(); const wrapper = mount(TrackTimingView, { props: { track: value, readOnly: true } });
+  await wrapper.get('[aria-label="调整 好 的句内偏移"]').trigger('keydown', { key: 'ArrowRight' });
+  expect(value.rows[0].words[1].time).toBe(1300); expect(wrapper.emitted('update')).toBeUndefined(); wrapper.unmount();
 });

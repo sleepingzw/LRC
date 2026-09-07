@@ -26,8 +26,18 @@ export async function onRequestPost({ request, env }) {
   const claimed = await dir.claimInvite(codeHash, Date.now());
   if (!claimed.ok) return json({ error: INVITE_ERROR[claimed.reason] || 'invalid invite' }, 400);
 
-  const { password_hash, salt, iterations } = await hashPassword(body.password);
-  const created = await dir.createUser({ name, display_name, role: claimed.role, password_hash, salt, iterations });
+  let credentials;
+  let created;
+  try {
+    credentials = await hashPassword(body.password);
+    created = await dir.createUser({
+      name, display_name, role: claimed.role, ...credentials,
+    });
+  } catch (error) {
+    // 派生或写入异常也不能让占用状态永久卡住邀请码
+    await dir.releaseInvite(codeHash);
+    throw error;
+  }
   if (!created.ok) {
     // 建号失败（撞用户名）不能让邀请码白白作废：放回未使用状态，换个用户名还能重试
     await dir.releaseInvite(codeHash);

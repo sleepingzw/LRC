@@ -74,6 +74,22 @@ test('邀请码一次性使用，注册成功后复用被拒', async () => {
   assert.equal(reused.status, 400);
 });
 
+test('注册角色只能来自邀请码，客户端 role 不能提权', async () => {
+  const { env, dir } = await freshEnv();
+  const { cookie: adminCookie } = await bootstrapAdmin(env);
+  const inviteRes = await handleApi(req('https://x/api/auth/invite', {
+    method: 'POST', body: { role: 'editor' }, cookie: adminCookie,
+  }), env);
+  const { code } = await inviteRes.json();
+
+  const registered = await handleApi(req('https://x/api/auth/register', {
+    method: 'POST', body: { invite_code: code, name: 'role-check', password: 'password123', role: 'admin' },
+  }), env);
+  assert.equal(registered.status, 201);
+  assert.equal((await registered.json()).user.role, 'editor');
+  assert.equal(dir.getUserByName('role-check').role, 'editor');
+});
+
 test('并发用同一个邀请码注册，只有一个请求成功', async () => {
   const { env, dir } = await freshEnv();
   const { cookie: adminCookie } = await bootstrapAdmin(env);
@@ -139,6 +155,30 @@ test('用户名重复被拒', async () => {
     method: 'POST', body: { invite_code: await invite(), name: 'dupuser', password: 'password123' },
   }), env);
   assert.equal(dup.status, 409);
+});
+
+test('建号抛异常后邀请码可重试', async () => {
+  const { env, dir } = await freshEnv();
+  const { cookie: adminCookie } = await bootstrapAdmin(env);
+  const inviteRes = await handleApi(req('https://x/api/auth/invite', {
+    method: 'POST', body: {}, cookie: adminCookie,
+  }), env);
+  const { code } = await inviteRes.json();
+  const originalCreateUser = dir.createUser;
+  dir.createUser = () => { throw new Error('simulated create failure'); };
+
+  await assert.rejects(
+    handleApi(req('https://x/api/auth/register', {
+      method: 'POST', body: { invite_code: code, name: 'retry-a', password: 'password123' },
+    }), env),
+    /simulated create failure/,
+  );
+
+  dir.createUser = originalCreateUser;
+  const retry = await handleApi(req('https://x/api/auth/register', {
+    method: 'POST', body: { invite_code: code, name: 'retry-b', password: 'password123' },
+  }), env);
+  assert.equal(retry.status, 201);
 });
 
 test('登录失败不泄漏用户是否存在，响应体一致且耗时接近', async () => {

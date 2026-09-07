@@ -13,7 +13,8 @@ const MAX_ASSETS = MAX_FILES;
 const MAX_ASSET_LINKS = 20;
 const ASSET_ROLES = new Set(['song', 'photo', 'text', 'staff', 'cover', 'etc']);
 const DOCUMENT_KINDS = new Set(['file', 'folder']);
-const DOCUMENT_EXTENSIONS = /\.(?:lrc|elrc|txt|md|json)$/i;
+const DOCUMENT_EXTENSIONS = /\.(?:txt|md|json)$/i;
+const LYRIC_EXTENSIONS = /\.(?:lrc|elrc)$/i;
 const RESERVED_NAMES = new Set(['meta.json', 'manifest.toml', 'manifest.json']);
 const REF_RE = /^[0-9a-f]{32}$/;
 
@@ -141,7 +142,9 @@ function validDraftPaths(draft) {
     for (const parent of parentPaths(stem)) {
       if (!documentFolders.has(parent) && !implicitDirectories.has(parent)) return false;
     }
-    for (const ext of ['.lrc', '.elrc']) {
+    const plainText = !track.lrc && !track.klrc
+      && (Array.isArray(track.lines) ? track.lines.some((line) => typeof line === 'string' && line.trim()) : typeof track.lyrics === 'string' && track.lyrics.trim());
+    for (const ext of ['.lrc', '.elrc', ...(plainText ? ['.txt'] : [])]) {
       const key = `${stem}${ext}`;
       if (seen.has(key)) return false;
       seen.add(key);
@@ -228,9 +231,11 @@ function emptyDraft(album, submissionType = 'album') {
 function workspaceLyricsStem(track, order, occupied, assets) {
   if (track.lyric_stem !== undefined) {
     const stem = cleanRelPath(track.lyric_stem);
-    if (!stem || ['.lrc', '.elrc'].some((ext) => occupied.has(`${stem}${ext}`.toLowerCase()))) return null;
-    occupied.add(`${stem}.lrc`.toLowerCase());
-    occupied.add(`${stem}.elrc`.toLowerCase());
+    const plainText = !track.lrc && !track.klrc
+      && (Array.isArray(track.lines) ? track.lines.some((line) => typeof line === 'string' && line.trim()) : typeof track.lyrics === 'string' && track.lyrics.trim());
+    const extensions = ['.lrc', '.elrc', ...(plainText ? ['.txt'] : [])];
+    if (!stem || extensions.some((ext) => occupied.has(`${stem}${ext}`.toLowerCase()))) return null;
+    for (const ext of extensions) occupied.add(`${stem}${ext}`.toLowerCase());
     return stem;
   }
   const audio = trackAudio(track, order - 1, assets);
@@ -277,7 +282,7 @@ export async function onCreatePost({ request, env }) {
   const auth = await userFor(request, env); if (auth.error) return auth.error;
   const body = await request.json().catch(() => null);
   const album = cleanAlbum(body?.album);
-  if (!album) return json({ error: 'bad album' }, 400);
+  if (!album || (body?.submission_type !== undefined && !['album', 'single'].includes(body.submission_type))) return json({ error: 'bad album' }, 400);
   const draft = emptyDraft(album, body?.submission_type === 'single' ? 'single' : 'album');
   const ref = await createWorkspace(env, draft, auth.user);
   return ref ? json({ ok: true, ref, draft }) : json({ error: 'workspace unavailable' }, 503);
@@ -336,7 +341,7 @@ export async function onDocumentPost({ request, env }) {
   const cleanPath = cleanRelPath(path);
   const lyricMatch = kind === 'file' && cleanPath?.match(/^(.*)\.(lrc|elrc)$/i);
   if (!ref || !DOCUMENT_KINDS.has(kind) || cleanPath !== path || isReservedPath(path)
-    || (kind === 'file' && (!DOCUMENT_EXTENSIONS.test(path) || path.length > 200))) return json({ error: 'bad document' }, 400);
+    || (kind === 'file' && (!(DOCUMENT_EXTENSIONS.test(path) || LYRIC_EXTENSIONS.test(path)) || path.length > 200))) return json({ error: 'bad document' }, 400);
   const current = await writableWorkspace(env, ref); if (!current) return json({ error: 'workspace submitted' }, 409);
   const draft = await readJson(env, `${ROOT}/${ref}/draft.json`); if (!validDraft(draft)) return json({ error: 'not found' }, 404);
   if (!parentDirectoriesExist(draft, lyricMatch ? lyricMatch[1] : path)) return json({ error: 'parent folder is required' }, 409);
@@ -381,7 +386,9 @@ export async function onAssetPost({ request, env }) {
   const object = await env.UPLOAD_BUCKET.head(`web/${ref}/${n}`);
   if (!object || object.size !== size) return json({ error: 'missing upload', n }, 409);
   const asset = { n, path, role, size, linkTo };
-  draft.assets = [...assets.filter((item) => item.n !== n), asset].sort((a, b) => a.n - b.n);
+  const candidate = { ...draft, assets: [...assets.filter((item) => item.n !== n), asset].sort((a, b) => a.n - b.n) };
+  if (!validDraft(candidate)) return json({ error: 'file path conflict' }, 409);
+  draft.assets = candidate.assets;
   const status = current;
   await Promise.all([writeJson(env, `${ROOT}/${ref}/draft.json`, draft), writeJson(env, `${ROOT}/${ref}/status.json`, { ...status, updated: nowStamp(), source: draft.source?.kind || 'new', updated_by: auth.user.github || auth.user.name })]);
   return json({ ok: true, ref, asset });

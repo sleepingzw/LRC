@@ -81,6 +81,12 @@ test('new LRC workspace rejects unsafe drafts and submits registered assets thro
   assert.equal(duplicate.status, 200);
 });
 
+test('workspace creation validates submission type', async () => {
+  const target = env();
+  const response = await handleApi(authedRequest('https://x/api/workspace/create', { method: 'POST', body: { album: '类型校验', submission_type: 'forged' } }), target);
+  assert.equal(response.status, 400);
+});
+
 test('workspace documents and folders persist through save and draft refresh', async () => {
   const bucket = fakeBucket(); const target = env(bucket);
   const created = await (await handleApi(authedRequest('https://x/api/workspace/create', { method: 'POST', body: { album: '文档专辑', submission_type: 'single' } }), target)).json();
@@ -109,6 +115,9 @@ test('document API creates canonical lyric tracks and enforces parent/path confl
   assert.deepEqual((await lyric.json()).track, { order: 1, title: 'star', lyric_stem: 'lyrics/star', lrc: '', klrc: '', timing_locked: false, edited: true });
   const paired = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'lyrics/STAR.elrc' } }), target);
   assert.equal(paired.status, 409);
+  const forgedDocument = { ...JSON.parse(bucket.store.get(`workspace/${created.ref}/draft.json`)), documents: [{ kind: 'file', path: 'fake.lrc', text: '' }] };
+  const bypass = await handleApi(authedRequest('https://x/api/workspace/save', { method: 'POST', body: { ref: created.ref, draft: forgedDocument } }), target);
+  assert.equal(bypass.status, 400);
   const reserved = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'lyrics/meta.json' } }), target);
   assert.equal(reserved.status, 400);
 });
@@ -130,6 +139,23 @@ test('document files are materialized during extraction and saved drafts cannot 
   const savedFile = manifest.files.find((file) => file.path === 'source/readme.md');
   assert.ok(savedFile);
   assert.equal(bucket.store.get(`web/${created.ref}/${savedFile.n}`), '# saved document');
+});
+
+test('asset registration rejects collisions with canonical lyrics and plain text output', async () => {
+  const bucket = fakeBucket(); const target = env(bucket);
+  const created = await (await handleApi(authedRequest('https://x/api/workspace/create', { method: 'POST', body: { album: '素材冲突' } }), target)).json();
+  const lyric = await handleApi(authedRequest('https://x/api/workspace/document', { method: 'POST', body: { ref: created.ref, kind: 'file', path: 'song.lrc' } }), target);
+  assert.equal(lyric.status, 200);
+  await bucket.put(`web/${created.ref}/0`, 'old');
+  const collision = await handleApi(authedRequest('https://x/api/workspace/asset', { method: 'POST', body: { ref: created.ref, n: 0, path: 'song.elrc', role: 'text', size: 3 } }), target);
+  assert.equal(collision.status, 409);
+
+  const draft = JSON.parse(bucket.store.get(`workspace/${created.ref}/draft.json`));
+  draft.documents = [{ kind: 'file', path: 'song.txt', text: '' }];
+  assert.equal((await handleApi(authedRequest('https://x/api/workspace/save', { method: 'POST', body: { ref: created.ref, draft } }), target)).status, 200);
+  draft.tracks[0].lines = ['plain'];
+  const plainCollision = await handleApi(authedRequest('https://x/api/workspace/save', { method: 'POST', body: { ref: created.ref, draft } }), target);
+  assert.equal(plainCollision.status, 400);
 });
 
 test('published word timings are submitted as an ELRC sidecar', async () => {

@@ -21,7 +21,12 @@ describe('工作站会话界面', () => {
   });
   it('初始管理员错误会显示服务端错误', async () => {
     const wrapper = await mountWorkbench((url) => url === '/api/auth/setup' ? response({ needsBootstrap: true, githubConfigured: false }) : url === '/api/auth/me' ? response({ error: 'unauthorized' }, 401) : response({ error: '引导口令错误' }, 401));
-    expect(wrapper.text()).toContain('设置首个管理员'); await wrapper.find('form').trigger('submit'); await flushPromises(); expect(wrapper.text()).toContain('引导口令错误'); wrapper.unmount();
+    expect(wrapper.text()).toContain('设置首个管理员'); await wrapper.find('#bootstrap-token').setValue('token'); await wrapper.find('#bootstrap-name').setValue('root'); await wrapper.find('#bootstrap-password').setValue('eightchars'); await wrapper.find('form').trigger('submit'); await flushPromises(); expect(wrapper.text()).toContain('引导口令错误'); wrapper.unmount();
+  });
+  it('首个管理员空字段不发送请求并显示对应错误', async () => {
+    let requests = 0; const wrapper = await mountWorkbench((url) => { if (url === '/api/auth/setup') return response({ needsBootstrap: true, githubConfigured: false }); if (url === '/api/auth/me') return response({ error: 'unauthorized' }, 401); requests += 1; return response({}); });
+    await wrapper.find('form').trigger('submit'); await wrapper.vm.$nextTick();
+    expect(requests).toBe(0); expect(wrapper.text()).toContain('请输入部署引导口令。'); expect(wrapper.text()).toContain('用户名需为'); expect(wrapper.text()).toContain('密码需为 8–200 位。'); wrapper.unmount();
   });
   it('编辑者没有用户管理入口', async () => {
     const wrapper = await mountWorkbench((url) => url === '/api/auth/setup' ? response({ needsBootstrap: false, githubConfigured: false }) : response({ user: editor }));
@@ -35,6 +40,7 @@ describe('工作站会话界面', () => {
   it('管理员首次创建后退出返回普通登录而非重复初始化', async () => {
     const wrapper=await mountWorkbench((url)=>url==='/api/auth/setup'?response({needsBootstrap:true,githubConfigured:false}):url==='/api/auth/me'?response({error:'unauthorized'},401):url==='/api/auth/bootstrap'?response({user:admin}):response({ok:true}));
     await wrapper.find('input[autocomplete="username"]').setValue('root');
+    await wrapper.find('#bootstrap-token').setValue('token'); await wrapper.find('#bootstrap-password').setValue('eightchars');
     await wrapper.find('form').trigger('submit');await flushPromises();
     await wrapper.findAll('button').find(button=>button.text()==='退出').trigger('click');await flushPromises();
     expect(wrapper.text()).toContain('欢迎回来');expect(wrapper.text()).not.toContain('设置首个管理员');wrapper.unmount();
@@ -55,7 +61,8 @@ describe('工作站会话界面', () => {
     await wrapper.findAll('button').find((button) => button.text() === '使用邀请码注册').trigger('click');
     await wrapper.find('#invite-code').setValue('valid-code'); await wrapper.find('#register-name').setValue('writer'); await wrapper.find('#register-password').setValue('eightchars'); await wrapper.find('#register-confirm-password').setValue('eightchars');
     expect(wrapper.find('#register-password').attributes('type')).toBe('password'); await wrapper.findAll('.wb-password-toggle')[0].trigger('click'); expect(wrapper.find('#register-password').attributes('type')).toBe('text');
-    await wrapper.find('form').trigger('submit'); await flushPromises(); expect(wrapper.text()).toContain('邀请码已过期。'); wrapper.unmount();
+    await wrapper.find('form').trigger('submit'); await flushPromises(); expect(wrapper.text()).toContain('邀请码已过期。');
+    await wrapper.find('#register-name').setValue('UPPER'); await wrapper.find('form').trigger('submit'); await wrapper.vm.$nextTick(); expect(wrapper.text()).not.toContain('邀请码已过期。'); expect(wrapper.text()).toContain('用户名需为'); wrapper.unmount();
   });
   it('提交期间禁用重复提交和模式切换', async () => {
     let resolveLogin; const login = new Promise((resolve) => { resolveLogin = resolve; }); let calls = 0;

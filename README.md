@@ -11,6 +11,7 @@
 ## 收录专辑
 
 <!-- ALBUM_LIST_START -->
+- [碎屑](https://github.com/lsy-404/LRC#%E7%A2%8E%E5%B1%91)
 - [再次呼唤我的名字吧](https://github.com/lsy-404/LRC#%E5%86%8D%E6%AC%A1%E5%91%BC%E5%94%A4%E6%88%91%E7%9A%84%E5%90%8D%E5%AD%97%E5%90%A7)
 - [SEVEN](https://github.com/lsy-404/LRC#seven)
 - [溯流](https://github.com/lsy-404/LRC#%E6%BA%AF%E6%B5%81)
@@ -119,6 +120,34 @@
 ## 完整目录
 ---
 <!-- CATALOG_START -->
+<img src="https://raw.githubusercontent.com/lsy-404/LRC/main/res/%E7%A2%8E%E5%B1%91/Cover.jpg" alt="专辑封面" width="120" align="right">
+
+### 碎屑
+
+**[下载专辑歌词包](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/pack/%E7%A2%8E%E5%B1%91.zip)**
+
+<details>
+<summary>查看详细曲目 (12 首)</summary>
+
+| 曲目 | 操作 |
+| :- | :-: |
+| [01 愿望幽灵.lrc](res/%E7%A2%8E%E5%B1%91/01%20%E6%84%BF%E6%9C%9B%E5%B9%BD%E7%81%B5.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/01%20%E6%84%BF%E6%9C%9B%E5%B9%BD%E7%81%B5.lrc) |
+| [02 清晰人类.lrc](res/%E7%A2%8E%E5%B1%91/02%20%E6%B8%85%E6%99%B0%E4%BA%BA%E7%B1%BB.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/02%20%E6%B8%85%E6%99%B0%E4%BA%BA%E7%B1%BB.lrc) |
+| [03 空洞怪物.lrc](res/%E7%A2%8E%E5%B1%91/03%20%E7%A9%BA%E6%B4%9E%E6%80%AA%E7%89%A9.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/03%20%E7%A9%BA%E6%B4%9E%E6%80%AA%E7%89%A9.lrc) |
+| [04 温寒 inst.lrc](res/%E7%A2%8E%E5%B1%91/04%20%E6%B8%A9%E5%AF%92%20inst.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/04%20%E6%B8%A9%E5%AF%92%20inst.lrc) |
+| [05 你在看哪儿呢.lrc](res/%E7%A2%8E%E5%B1%91/05%20%E4%BD%A0%E5%9C%A8%E7%9C%8B%E5%93%AA%E5%84%BF%E5%91%A2.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/05%20%E4%BD%A0%E5%9C%A8%E7%9C%8B%E5%93%AA%E5%84%BF%E5%91%A2.lrc) |
+| [06 逐渐凝固.lrc](res/%E7%A2%8E%E5%B1%91/06%20%E9%80%90%E6%B8%90%E5%87%9D%E5%9B%BA.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/06%20%E9%80%90%E6%B8%90%E5%87%9D%E5%9B%BA.lrc) |
+| [07 流.lrc](res/%E7%A2%8E%E5%B1%91/07%20%E6%B5%81.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/07%20%E6%B5%81.lrc) |
+| [08 雨 inst.lrc](res/%E7%A2%8E%E5%B1%91/08%20%E9%9B%A8%20inst.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/08%20%E9%9B%A8%20inst.lrc) |
+| [09 中间灰.lrc](res/%E7%A2%8E%E5%B1%91/09%20%E4%B8%AD%E9%97%B4%E7%81%B0.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/09%20%E4%B8%AD%E9%97%B4%E7%81%B0.lrc) |
+| [10 忘记时间.lrc](res/%E7%A2%8E%E5%B1%91/10%20%E5%BF%98%E8%AE%B0%E6%97%B6%E9%97%B4.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/10%20%E5%BF%98%E8%AE%B0%E6%97%B6%E9%97%B4.lrc) |
+| [11 人造光.lrc](res/%E7%A2%8E%E5%B1%91/11%20%E4%BA%BA%E9%80%A0%E5%85%89.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/11%20%E4%BA%BA%E9%80%A0%E5%85%89.lrc) |
+| [12 碎屑.lrc](res/%E7%A2%8E%E5%B1%91/12%20%E7%A2%8E%E5%B1%91.lrc) | [下载](https://cdn.jsdelivr.net/gh/lsy-404/LRC@main/res/%E7%A2%8E%E5%B1%91/12%20%E7%A2%8E%E5%B1%91.lrc) |
+
+</details>
+
+---
+
 <img src="https://raw.githubusercontent.com/lsy-404/LRC/main/res/%E5%86%8D%E6%AC%A1%E5%91%BC%E5%94%A4%E6%88%91%E7%9A%84%E5%90%8D%E5%AD%97%E5%90%A7/cover.jpg" alt="专辑封面" width="120" align="right">
 
 ### 再次呼唤我的名字吧
@@ -1996,7 +2025,7 @@ _暂无 LRC 文件_
 
 ---
 
-<img src="https://raw.githubusercontent.com/lsy-404/LRC/main/res/%E4%B8%9B%E6%9E%97%E6%B3%95%E5%88%99Jungle%20Rules/Cover.png" alt="专辑封面" width="120" align="right">
+<img src="https://raw.githubusercontent.com/lsy-404/LRC/main/res/%E4%B8%9B%E6%9E%97%E6%B3%95%E5%88%99Jungle%20Rules/cover.jpg" alt="专辑封面" width="120" align="right">
 
 ### 丛林法则Jungle Rules
 
